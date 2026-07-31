@@ -19,13 +19,14 @@ class Secuencia extends Model
     ];
 
     protected $casts = [
-        'secsuc' => 'interger',
+        'secsuc' => 'integer',
         'secpdv' => 'integer',
         'sectipodoc' => 'integer',
         'secultimo' => 'integer'
     ];
 
-    public function emisor(): BelongsTo {
+    public function emisor(): BelongsTo
+    {
         return $this->belongsTo(Emisor::class, 'emiid', 'emiid');
     }
 }

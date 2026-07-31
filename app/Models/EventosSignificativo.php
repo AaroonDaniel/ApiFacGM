@@ -15,7 +15,7 @@ class EventosSignificativo extends Model
     protected const COD_SIN_INACCESIBLE = 2;
     protected const COD_CORTE_ENERGIA = 3;
     protected const COD_FALLA_SOFTWARE = 4;
-    protected const COD_CAMBIO_INFRA= 5;
+    protected const COD_CAMBIO_INFRA = 5;
     protected const COD_FALLA_COMMS = 6;
     protected const COD_FUERZA_MAYOR = 7;
 
@@ -31,14 +31,12 @@ class EventosSignificativo extends Model
         'eveini',
         'evefin',
         'evecufd',
-        'evecudfctrl',
-        'evecorrec',
-        'evecodrec',
+        'evecufdctrl',
         'evecodrec',
         'evecodrecpaq',
-        'evesst',
-        'eseusr',
-        'esereg'
+        'eveest',
+        'eveusr',
+        'evereg',
     ];
 
     protected $casts = [
@@ -48,15 +46,18 @@ class EventosSignificativo extends Model
         'evecod' => 'integer'
     ];
 
-    public function emisor(): BelongsTo {
+    public function emisor(): BelongsTo
+    {
         return $this->belongsTo(Emisor::class, 'emiid', 'emiid');
     }
 
-    public function facturas(): HasMany {
+    public function facturas(): HasMany
+    {
         return $this->hasMany(Factura::class, 'faceveid', 'eveid');
     }
 
-    public function scopeDisponibleParaAcoplar ($query) {
+    public function scopeDisponibleParaAcoplar($query)
+    {
         return $query->whereIn('eveest', [self::ESTADO_ACTIVO, self::ESTADO_CERRADO])->whereNull('evecodrec');
     }
 }

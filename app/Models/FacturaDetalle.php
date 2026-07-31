@@ -7,11 +7,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class FacturaDetalle extends Model
 {
-    protected $table = 'factura_detalle';
+    protected $table = 'factura_detalles';
     protected $primaryKey = 'facdetid';
 
     protected $fillable = [
-        'facoid',
+        'facid',
         'facdetacteco',
         'facdetprodsin',
         'facdetcodprod',
@@ -28,7 +28,7 @@ class FacturaDetalle extends Model
         'facdetprc' => 'decimal:2',
         'facdetdscto' => 'decimal:2',
         'facdetsub' => 'decimal:2',
-        'facdeunimed' => 'integer'
+        'facdetunimed' => 'integer'
     ];
 
     public function factura(): BelongsTo {

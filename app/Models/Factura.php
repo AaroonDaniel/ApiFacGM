@@ -43,8 +43,8 @@ class Factura extends Model
         'facrefext',
         'faceveid',
         'facxmlpath',
-        'facmontonul',
-        'facfchamul'
+        'facmotanul',
+        'facfchanul'
     ];
 
     protected $casts = [
@@ -59,20 +59,23 @@ class Factura extends Model
         'facmotanul'  => 'integer',
     ];
 
-    public function emisor(): BelongsTo {
+    public function emisor(): BelongsTo
+    {
         return $this->belongsTo(Emisor::class, 'emiid', 'emiid');
     }
 
-    public function detalles(): HasMany {
+    public function detalles(): HasMany
+    {
         return $this->hasMany(FacturaDetalle::class, 'facid', 'facid');
     }
 
-    public function evento(): BelongsTo {
-        return $this->belongsTo(EventosSignificativo::class, 'eveid', 'eveid');
+    public function evento(): BelongsTo
+    {
+        return $this->belongsTo(EventosSignificativo::class, 'faceveid', 'eveid'); // era 'eveid','eveid'
     }
 
-    public function scopeHuerfano($query) {
+    public function scopeHuerfano($query)
+    {
         return $query->where('facsiatest', self::SIAT_OFFLINE)->whereNull('faceveid');
     }
 }
-

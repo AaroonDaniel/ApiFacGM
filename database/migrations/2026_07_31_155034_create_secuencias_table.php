@@ -12,8 +12,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('secuencias', function (Blueprint $table) {
-            $table->id();
+            $table->bigIncrements('secid');
+            $table->foreignId('emiid')->constrained('emisores', 'emiid')->cascadeOnDelete();
+            $table->integer('secsuc')->default(0);
+            $table->integer('secpdv')->default(0);
+            $table->integer('sectipodoc')->default(1);
+            $table->integer('secultimo')->default(0);
             $table->timestamps();
+            $table->unique(['emiid', 'secsuc', 'secpdv', 'sectipodoc'], 'secuencias_dosificacion_unica');
         });
     }
 

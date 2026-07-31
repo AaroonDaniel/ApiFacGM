@@ -40,7 +40,7 @@ class Emisor extends Model
         'emipdv' => 'integer',
         'emimod' => 'integer',
         'emiamb' => 'integer',
-        'emiest' => 'integer',
+        'emiest' => 'boolean',
     ];
 
     protected $hidden = ['emitoken'];
@@ -61,7 +61,7 @@ class Emisor extends Model
         return $this->hasMany(Factura::class, 'emiid', 'emiid');
     }
 
-    public function actividades(): hasMany {
+    public function actividades(): HasMany {
         return $this->hasMany(Actividad::class, 'emiid', 'emiid');
     }
 

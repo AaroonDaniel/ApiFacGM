@@ -16,12 +16,25 @@ class SiatCodigo extends Model
     public const TIPO_CUFD = 'cufd';
 
     protected $fillable = [
+        'emiid',
+        'scotipo',
+        'scovalor',
+        'scocodctrl',
+        'scoamb',
+        'scosuc',
+        'scopdv',
+        'scoemi',
+        'scoven',
+        'scoest',
+    ];
+
+    protected $casts = [
         'scoemi' => 'datetime',
         'scoven' => 'datetime',
         'scoest' => 'boolean',
         'scoamb' => 'integer',
         'scosuc' => 'integer',
-        'scopdv' => 'integer'
+        'scopdv' => 'integer',
     ];
 
     public function emisor(): BelongsTo {
