@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignId('sisid')->nullable()->constrained('sistemas_cliente', 'sisid')->nullOnDelete();
             $table->string('eminit', 20)->unique();
             $table->string('emirazsoc', 255);
-            $table->string('eminum', 100);
+            $table->string('emimun', 100);
             $table->string('emidir', 255);
             $table->string('emitel', 30)->nullable();
 
