@@ -11,12 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('sistemas_cliente', function (Blueprint $table) {
-            $table->bigIncrements('sisid');
-            $table->string('siscod', 50)->unique();
-            $table->string('sisnom', 150);
-            $table->string('sisapikey', 255);
-            $table->boolean('sisest')->default(true);
+        Schema::create('unidades_medida', function (Blueprint $table) {
+            $table->bigIncrements('uniid');
+            $table->integer('unicod')->unique();
+            $table->string('unidesc', 100);
             $table->timestamps();
         });
     }
@@ -26,6 +24,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('sistemas_cliente');
+        Schema::dropIfExists('unidades_medida');
     }
 };

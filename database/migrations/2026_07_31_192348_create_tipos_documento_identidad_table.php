@@ -11,12 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('sistemas_cliente', function (Blueprint $table) {
-            $table->bigIncrements('sisid');
-            $table->string('siscod', 50)->unique();
-            $table->string('sisnom', 150);
-            $table->string('sisapikey', 255);
-            $table->boolean('sisest')->default(true);
+        Schema::create('tipos_documento_identidad', function (Blueprint $table) {
+            $table->bigIncrements('tdiid');
+            $table->integer('tdicod');
+            $table->string('tdidesc', 100);
             $table->timestamps();
         });
     }
@@ -26,6 +24,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('sistemas_cliente');
+        Schema::dropIfExists('tipos_documento_identidad');
     }
 };
