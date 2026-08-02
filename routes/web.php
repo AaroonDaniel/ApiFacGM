@@ -1,7 +1,8 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\FacturaController;
 
-Route::get('/', function () {
-    return view('welcome');
-});
+
+Route::post('/facturas', [FacturaController::class, 'store']);
+Route::get('/facturas/{factura}', [FacturaController::class, 'show']);
