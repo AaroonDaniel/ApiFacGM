@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Emisor;
 use App\Models\Factura;
+use App\Services\AnulacionService;
 use App\Services\EmisionService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -12,8 +13,10 @@ use Throwable;
 
 class FacturaController extends Controller
 {
-    public function __construct(private EmisionService $emisionService)
-    {
+    public function __construct(
+        private EmisionService $emisionService,
+        private AnulacionService $anulacionService,
+    ) {
     }
 
     /**
@@ -103,6 +106,34 @@ class FacturaController extends Controller
     }
 
     /**
+     * POST /api/facturas/{factura}/anular — anular una factura ya aceptada.
+     */
+    public function anular(Request $request, Factura $factura): JsonResponse
+    {
+        if ($factura->facsisorig !== $request->attributes->get('sistemaCliente')->siscod) {
+            return response()->json([
+                'exito' => false,
+                'error' => 'No tienes acceso a esta factura.',
+            ], 403);
+        }
+
+        $datos = $request->validate([
+            'codigo_motivo' => 'required|integer',
+        ]);
+
+        try {
+            $factura = $this->anulacionService->anular($factura, $datos['codigo_motivo']);
+        } catch (Throwable $e) {
+            return response()->json([
+                'exito' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        }
+
+        return response()->json($this->payload($factura), 200);
+    }
+
+    /**
      * Arma el cuerpo JSON con el estado de la factura.
      */
     private function payload(Factura $factura): array
@@ -117,6 +148,8 @@ class FacturaController extends Controller
                 'siat_estado'      => $factura->facsiatest,
                 'codigo_recepcion' => $factura->faccodrec,
                 'fecha_emision'    => $factura->fachora?->format('Y-m-d\TH:i:s.v'),
+                'motivo_anulacion' => $factura->facmotanul,
+                'fecha_anulacion'  => $factura->facfchanul?->format('Y-m-d\TH:i:s.v'),
             ],
         ];
     }

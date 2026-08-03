@@ -401,6 +401,42 @@ class SiatService
         }
     }
 
+    /**
+     * Anula una factura ya aceptada por el SIAT.
+     * status: 'accepted' | 'rejected' | 'offline'
+     */
+    public function anularFactura(string $cuis, string $cufd, string $cuf, int $codigoMotivo): array
+    {
+        try {
+            $client = $this->getSoapClient('ServicioFacturacionCompraVenta');
+
+            $params = ['SolicitudServicioAnulacionFactura' => array_merge($this->getBaseParameters(), [
+                'codigoDocumentoSector' => 1,
+                'codigoEmision'         => 1,
+                'tipoFacturaDocumento'  => 1,
+                'cuis'                  => $cuis,
+                'cufd'                  => $cufd,
+                'cuf'                   => $cuf,
+                'codigoMotivo'          => $codigoMotivo,
+            ])];
+
+            $response = $client->anulacionFactura($params);
+            $r = $response->RespuestaServicioFacturacion ?? null;
+
+            if ($r && !empty($r->transaccion)) {
+                return ['status' => 'accepted', 'mensaje' => 'Factura anulada ante el SIAT', 'raw' => $response];
+            }
+
+            return ['status' => 'rejected', 'mensaje' => $this->extractSiatMessage($r), 'raw' => $response];
+        } catch (SoapFault $fault) {
+            Log::error('SIAT anularFactura: ' . $fault->getMessage());
+            return [
+                'status'  => $this->isNetworkFailure($fault) ? 'offline' : 'rejected',
+                'mensaje' => $fault->getMessage(), 'raw' => null,
+            ];
+        }
+    }
+
     // ==========================================
     // CONTINGENCIA (EVENTOS SIGNIFICATIVOS Y PAQUETES OFFLINE)
     // ==========================================
