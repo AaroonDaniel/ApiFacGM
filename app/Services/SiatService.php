@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Emisor;
 use App\Models\SiatCodigo;
+use App\Models\SiatTransaccion;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use SoapClient;
@@ -169,6 +170,50 @@ class SiatService
         return false;
     }
 
+    /**
+     * Audita cada llamada real al SIAT. Nunca debe romper el flujo
+     * principal: un fallo al guardar el log solo se registra en el log
+     * de aplicación, no se propaga.
+     */
+    private function registrarTransaccion(
+        string $servicio,
+        array $peticion,
+        mixed $respuesta,
+        string $estado,
+        ?int $facturaId = null
+    ): void {
+        try {
+            SiatTransaccion::create([
+                'emiid'    => $this->emisor->emiid,
+                'stxfacid' => $facturaId,
+                'stxserv'  => $servicio,
+                'stxpet'   => json_encode($this->sanitizarBinariosParaLog($peticion)),
+                'stxresp'  => is_string($respuesta) ? $respuesta : json_encode($respuesta),
+                'stxest'   => $estado,
+                'stxfch'   => now(),
+            ]);
+        } catch (Exception $e) {
+            Log::error("No se pudo registrar la transacción SIAT ({$servicio}): " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Reemplaza campos binarios (ej. 'archivo', gzip crudo) por un
+     * placeholder legible antes de loguear — json_encode() falla en
+     * silencio con bytes que no son UTF-8 válido.
+     */
+    private function sanitizarBinariosParaLog(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $data[$key] = $this->sanitizarBinariosParaLog($value);
+            } elseif ($key === 'archivo' && is_string($value)) {
+                $data[$key] = '<binario, ' . strlen($value) . ' bytes>';
+            }
+        }
+        return $data;
+    }
+
     // ==========================================
     // COMUNICACIÓN Y CÓDIGOS (CUIS / CUFD)
     // ==========================================
@@ -178,40 +223,50 @@ class SiatService
         try {
             $client = $this->getSoapClient('FacturacionCodigos');
             $result = $client->verificarComunicacion();
+            $this->registrarTransaccion('verificarComunicacion', [], $result, SiatTransaccion::ESTADO_EXITO);
             return ['success' => true, 'message' => 'Comunicación Exitosa', 'data' => $result];
         } catch (SoapFault $fault) {
             Log::error('SIAT verifyCommunication: ' . $fault->getMessage());
-            return ['success' => false, 'message' => $fault->getMessage(), 'offline' => $this->isNetworkFailure($fault)];
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('verificarComunicacion', [], $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO);
+            return ['success' => false, 'message' => $fault->getMessage(), 'offline' => $offline];
         }
     }
 
     public function getCuis(): array
     {
+        $params = ['SolicitudCuis' => $this->getBaseParameters()];
         try {
             $client   = $this->getSoapClient('FacturacionCodigos');
-            $params   = ['SolicitudCuis' => $this->getBaseParameters()];
             $response = $client->cuis($params);
 
             if (isset($response->RespuestaCuis->transaccion) && $response->RespuestaCuis->transaccion) {
+                $this->registrarTransaccion('cuis', $params, $response, SiatTransaccion::ESTADO_EXITO);
                 return ['success' => true, 'codigo' => $response->RespuestaCuis->codigo];
             }
+            $this->registrarTransaccion('cuis', $params, $response, SiatTransaccion::ESTADO_RECHAZO);
             return ['success' => false, 'error' => 'Rechazado por SIAT',
                 'detalles' => $response->RespuestaCuis->mensajesList ?? 'Error desconocido'];
         } catch (SoapFault $fault) {
             Log::error('SIAT getCuis: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('cuis', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO);
             return ['success' => false, 'error' => 'Fallo de conexión SOAP',
-                'mensaje' => $fault->getMessage(), 'offline' => $this->isNetworkFailure($fault)];
+                'mensaje' => $fault->getMessage(), 'offline' => $offline];
         }
     }
 
     public function getCufd(string $cuis): array
     {
+        $params = ['SolicitudCufd' => array_merge($this->getBaseParameters(), ['cuis' => $cuis])];
         try {
             $client   = $this->getSoapClient('FacturacionCodigos');
-            $params   = ['SolicitudCufd' => array_merge($this->getBaseParameters(), ['cuis' => $cuis])];
             $response = $client->cufd($params);
 
             if (isset($response->RespuestaCufd->transaccion) && $response->RespuestaCufd->transaccion) {
+                $this->registrarTransaccion('cufd', $params, $response, SiatTransaccion::ESTADO_EXITO);
                 return [
                     'success'       => true,
                     'codigo'        => $response->RespuestaCufd->codigo,
@@ -219,12 +274,16 @@ class SiatService
                     'fechaVigencia' => $response->RespuestaCufd->fechaVigencia,
                 ];
             }
+            $this->registrarTransaccion('cufd', $params, $response, SiatTransaccion::ESTADO_RECHAZO);
             return ['success' => false, 'error' => 'Rechazado por SIAT',
                 'detalles' => $response->RespuestaCufd->mensajesList ?? 'Error desconocido'];
         } catch (SoapFault $fault) {
             Log::error('SIAT getCufd: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('cufd', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO);
             return ['success' => false, 'error' => 'Fallo de conexión SOAP',
-                'mensaje' => $fault->getMessage(), 'offline' => $this->isNetworkFailure($fault)];
+                'mensaje' => $fault->getMessage(), 'offline' => $offline];
         }
     }
 
@@ -366,36 +425,46 @@ class SiatService
      * Envía la factura al SIAT (online). Devuelve estado normalizado:
      *  status: 'accepted' | 'rejected' | 'offline'
      */
-    public function receiveInvoice(string $cuis, string $cufd, string $archive, string $issueDate, string $hashArchive): array
-    {
+    public function receiveInvoice(
+        string $cuis,
+        string $cufd,
+        string $archive,
+        string $issueDate,
+        string $hashArchive,
+        ?int $facturaId = null
+    ): array {
+        $params = ['SolicitudServicioRecepcionFactura' => array_merge($this->getBaseParameters(), [
+            'codigoDocumentoSector' => 1,
+            'codigoEmision'         => 1,
+            'tipoFacturaDocumento'  => 1,
+            'cuis'                  => $cuis,
+            'cufd'                  => $cufd,
+            'archivo'               => $archive,
+            'fechaEnvio'            => $issueDate,
+            'hashArchivo'           => $hashArchive,
+        ])];
+
         try {
-            $client = $this->getSoapClient('ServicioFacturacionCompraVenta');
-
-            $params = ['SolicitudServicioRecepcionFactura' => array_merge($this->getBaseParameters(), [
-                'codigoDocumentoSector' => 1,
-                'codigoEmision'         => 1,
-                'tipoFacturaDocumento'  => 1,
-                'cuis'                  => $cuis,
-                'cufd'                  => $cufd,
-                'archivo'               => $archive,
-                'fechaEnvio'            => $issueDate,
-                'hashArchivo'           => $hashArchive,
-            ])];
-
+            $client   = $this->getSoapClient('ServicioFacturacionCompraVenta');
             $response = $client->recepcionFactura($params);
             $r = $response->RespuestaServicioFacturacion ?? null;
 
             if ($r && !empty($r->transaccion)) {
+                $this->registrarTransaccion('recepcionFactura', $params, $response, SiatTransaccion::ESTADO_EXITO, $facturaId);
                 return ['status' => 'accepted', 'codigoRecepcion' => $r->codigoRecepcion ?? null,
                     'mensaje' => 'Factura recibida por el SIAT', 'raw' => $response];
             }
 
+            $this->registrarTransaccion('recepcionFactura', $params, $response, SiatTransaccion::ESTADO_RECHAZO, $facturaId);
             return ['status' => 'rejected', 'codigoRecepcion' => null,
                 'mensaje' => $this->extractSiatMessage($r), 'raw' => $response];
         } catch (SoapFault $fault) {
             Log::error('SIAT receiveInvoice: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('recepcionFactura', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO, $facturaId);
             return [
-                'status'  => $this->isNetworkFailure($fault) ? 'offline' : 'rejected',
+                'status'  => $offline ? 'offline' : 'rejected',
                 'codigoRecepcion' => null, 'mensaje' => $fault->getMessage(), 'raw' => null,
             ];
         }
@@ -405,33 +474,37 @@ class SiatService
      * Anula una factura ya aceptada por el SIAT.
      * status: 'accepted' | 'rejected' | 'offline'
      */
-    public function anularFactura(string $cuis, string $cufd, string $cuf, int $codigoMotivo): array
+    public function anularFactura(string $cuis, string $cufd, string $cuf, int $codigoMotivo, ?int $facturaId = null): array
     {
+        $params = ['SolicitudServicioAnulacionFactura' => array_merge($this->getBaseParameters(), [
+            'codigoDocumentoSector' => 1,
+            'codigoEmision'         => 1,
+            'tipoFacturaDocumento'  => 1,
+            'cuis'                  => $cuis,
+            'cufd'                  => $cufd,
+            'cuf'                   => $cuf,
+            'codigoMotivo'          => $codigoMotivo,
+        ])];
+
         try {
-            $client = $this->getSoapClient('ServicioFacturacionCompraVenta');
-
-            $params = ['SolicitudServicioAnulacionFactura' => array_merge($this->getBaseParameters(), [
-                'codigoDocumentoSector' => 1,
-                'codigoEmision'         => 1,
-                'tipoFacturaDocumento'  => 1,
-                'cuis'                  => $cuis,
-                'cufd'                  => $cufd,
-                'cuf'                   => $cuf,
-                'codigoMotivo'          => $codigoMotivo,
-            ])];
-
+            $client   = $this->getSoapClient('ServicioFacturacionCompraVenta');
             $response = $client->anulacionFactura($params);
             $r = $response->RespuestaServicioFacturacion ?? null;
 
             if ($r && !empty($r->transaccion)) {
+                $this->registrarTransaccion('anulacionFactura', $params, $response, SiatTransaccion::ESTADO_EXITO, $facturaId);
                 return ['status' => 'accepted', 'mensaje' => 'Factura anulada ante el SIAT', 'raw' => $response];
             }
 
+            $this->registrarTransaccion('anulacionFactura', $params, $response, SiatTransaccion::ESTADO_RECHAZO, $facturaId);
             return ['status' => 'rejected', 'mensaje' => $this->extractSiatMessage($r), 'raw' => $response];
         } catch (SoapFault $fault) {
             Log::error('SIAT anularFactura: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('anulacionFactura', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO, $facturaId);
             return [
-                'status'  => $this->isNetworkFailure($fault) ? 'offline' : 'rejected',
+                'status'  => $offline ? 'offline' : 'rejected',
                 'mensaje' => $fault->getMessage(), 'raw' => null,
             ];
         }
@@ -460,35 +533,39 @@ class SiatService
         CarbonInterface $fin,
         string $cufdEvento
     ): array {
+        $params = ['SolicitudEventoSignificativo' => array_merge($this->getBaseParameters(false), [
+            'codigoMotivoEvento'     => $codigoMotivo,
+            'cufd'                   => $cufdAuth,
+            'cufdEvento'             => $cufdEvento,
+            'cuis'                   => $cuis,
+            'descripcion'            => $descripcion,
+            'fechaHoraInicioEvento'  => $inicio->format('Y-m-d\TH:i:s.v'),
+            'fechaHoraFinEvento'     => $fin->format('Y-m-d\TH:i:s.v'),
+        ])];
+
         try {
-            $client = $this->getSoapClient('FacturacionOperaciones');
-
-            $params = ['SolicitudEventoSignificativo' => array_merge($this->getBaseParameters(false), [
-                'codigoMotivoEvento'     => $codigoMotivo,
-                'cufd'                   => $cufdAuth,
-                'cufdEvento'             => $cufdEvento,
-                'cuis'                   => $cuis,
-                'descripcion'            => $descripcion,
-                'fechaHoraInicioEvento'  => $inicio->format('Y-m-d\TH:i:s.v'),
-                'fechaHoraFinEvento'     => $fin->format('Y-m-d\TH:i:s.v'),
-            ])];
-
+            $client   = $this->getSoapClient('FacturacionOperaciones');
             $response = $client->registroEventoSignificativo($params);
             $r = $response->RespuestaListaEventos ?? null;
 
             if ($r && !empty($r->transaccion)) {
+                $this->registrarTransaccion('registroEventoSignificativo', $params, $response, SiatTransaccion::ESTADO_EXITO);
                 return [
                     'success'         => true,
                     'codigoRecepcion' => $r->codigoRecepcionEventoSignificativo ?? null,
                 ];
             }
 
+            $this->registrarTransaccion('registroEventoSignificativo', $params, $response, SiatTransaccion::ESTADO_RECHAZO);
             return ['success' => false, 'mensaje' => $this->extractSiatMessage($r)];
         } catch (SoapFault $fault) {
             Log::error('SIAT registrarEventoSignificativo: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('registroEventoSignificativo', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO);
             return [
                 'success' => false,
-                'offline' => $this->isNetworkFailure($fault),
+                'offline' => $offline,
                 'mensaje' => $fault->getMessage(),
             ];
         }
@@ -507,36 +584,40 @@ class SiatService
         int $cantidadFacturas,
         string $codigoEvento
     ): array {
+        $params = ['SolicitudServicioRecepcionPaquete' => array_merge($this->getBaseParameters(), [
+            'codigoDocumentoSector' => 1,
+            'codigoEmision'         => 2, // offline
+            'tipoFacturaDocumento'  => 1,
+            'cuis'                  => $cuis,
+            'cufd'                  => $cufd,
+            'archivo'               => $archivoBinario,
+            'fechaEnvio'            => $issueDate,
+            'hashArchivo'           => $hashArchivo,
+            'cantidadFacturas'      => $cantidadFacturas,
+            'codigoEvento'          => $codigoEvento,
+        ])];
+
         try {
-            $client = $this->getSoapClient('ServicioFacturacionCompraVenta');
-
-            $params = ['SolicitudServicioRecepcionPaquete' => array_merge($this->getBaseParameters(), [
-                'codigoDocumentoSector' => 1,
-                'codigoEmision'         => 2, // offline
-                'tipoFacturaDocumento'  => 1,
-                'cuis'                  => $cuis,
-                'cufd'                  => $cufd,
-                'archivo'               => $archivoBinario,
-                'fechaEnvio'            => $issueDate,
-                'hashArchivo'           => $hashArchivo,
-                'cantidadFacturas'      => $cantidadFacturas,
-                'codigoEvento'          => $codigoEvento,
-            ])];
-
+            $client   = $this->getSoapClient('ServicioFacturacionCompraVenta');
             $response = $client->recepcionPaqueteFactura($params);
             $r = $response->RespuestaServicioFacturacion ?? null;
 
             if ($r && !empty($r->transaccion)) {
+                $this->registrarTransaccion('recepcionPaqueteFactura', $params, $response, SiatTransaccion::ESTADO_EXITO);
                 return ['status' => 'received', 'codigoRecepcion' => $r->codigoRecepcion ?? null,
                     'mensaje' => 'Paquete recibido por el SIAT, pendiente de validación', 'raw' => $response];
             }
 
+            $this->registrarTransaccion('recepcionPaqueteFactura', $params, $response, SiatTransaccion::ESTADO_RECHAZO);
             return ['status' => 'rejected', 'codigoRecepcion' => null,
                 'mensaje' => $this->extractSiatMessage($r), 'raw' => $response];
         } catch (SoapFault $fault) {
             Log::error('SIAT enviarPaqueteOffline: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('recepcionPaqueteFactura', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO);
             return [
-                'status'  => $this->isNetworkFailure($fault) ? 'offline' : 'rejected',
+                'status'  => $offline ? 'offline' : 'rejected',
                 'codigoRecepcion' => null, 'mensaje' => $fault->getMessage(), 'raw' => null,
             ];
         }
@@ -548,38 +629,44 @@ class SiatService
      */
     public function validarPaqueteOffline(string $cuis, string $cufd, string $codigoRecepcionPaquete): array
     {
+        $params = ['SolicitudServicioValidacionRecepcionPaquete' => array_merge($this->getBaseParameters(), [
+            'codigoDocumentoSector' => 1,
+            'codigoEmision'         => 2,
+            'tipoFacturaDocumento'  => 1,
+            'cuis'                  => $cuis,
+            'cufd'                  => $cufd,
+            'codigoRecepcion'       => $codigoRecepcionPaquete,
+        ])];
+
         try {
-            $client = $this->getSoapClient('ServicioFacturacionCompraVenta');
-
-            $params = ['SolicitudServicioValidacionRecepcionPaquete' => array_merge($this->getBaseParameters(), [
-                'codigoDocumentoSector' => 1,
-                'codigoEmision'         => 2,
-                'tipoFacturaDocumento'  => 1,
-                'cuis'                  => $cuis,
-                'cufd'                  => $cufd,
-                'codigoRecepcion'       => $codigoRecepcionPaquete,
-            ])];
-
+            $client   = $this->getSoapClient('ServicioFacturacionCompraVenta');
             $response = $client->validacionRecepcionPaqueteFactura($params);
             $r = $response->RespuestaServicioFacturacion ?? null;
 
             $codigoDescripcion = strtoupper($r->codigoDescripcion ?? '');
+            $status = match (true) {
+                $codigoDescripcion === 'VALIDADA'   => 'accepted',
+                $codigoDescripcion === 'OBSERVADA'  => 'observed',
+                $codigoDescripcion === 'RECHAZADA'  => 'rejected',
+                $codigoDescripcion === 'EN PROCESO' => 'processing',
+                default                              => 'rejected',
+            };
+
+            $this->registrarTransaccion('validacionRecepcionPaqueteFactura', $params, $response,
+                $status === 'accepted' ? SiatTransaccion::ESTADO_EXITO : SiatTransaccion::ESTADO_RECHAZO);
 
             return [
-                'status' => match (true) {
-                    $codigoDescripcion === 'VALIDADA'   => 'accepted',
-                    $codigoDescripcion === 'OBSERVADA'  => 'observed',
-                    $codigoDescripcion === 'RECHAZADA'  => 'rejected',
-                    $codigoDescripcion === 'EN PROCESO' => 'processing',
-                    default                              => 'rejected',
-                },
+                'status'  => $status,
                 'mensaje' => $this->extractSiatMessage($r),
                 'raw'     => $response,
             ];
         } catch (SoapFault $fault) {
             Log::error('SIAT validarPaqueteOffline: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('validacionRecepcionPaqueteFactura', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO);
             return [
-                'status'  => $this->isNetworkFailure($fault) ? 'offline' : 'rejected',
+                'status'  => $offline ? 'offline' : 'rejected',
                 'mensaje' => $fault->getMessage(),
                 'raw'     => null,
             ];

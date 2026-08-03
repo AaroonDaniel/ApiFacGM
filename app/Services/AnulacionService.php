@@ -41,7 +41,7 @@ class AnulacionService
             throw new Exception('No se pudo obtener CUIS/CUFD vigente para anular la factura.');
         }
 
-        $resp = $siat->anularFactura($cuis, $cufd->scovalor, $factura->faccuf, $codigoMotivo);
+        $resp = $siat->anularFactura($cuis, $cufd->scovalor, $factura->faccuf, $codigoMotivo, $factura->facid);
 
         if (($resp['status'] ?? null) !== 'accepted') {
             throw new Exception('El SIAT rechazó la anulación: ' . ($resp['mensaje'] ?? 'sin detalle'));

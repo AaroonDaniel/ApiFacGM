@@ -144,7 +144,7 @@ class EmisionService
             return;
         }
 
-        $resp = $siat->receiveInvoice($cuis, $cufd->scovalor, $gzip, now()->format('Y-m-d\TH:i:s.v'), $hash);
+        $resp = $siat->receiveInvoice($cuis, $cufd->scovalor, $gzip, now()->format('Y-m-d\TH:i:s.v'), $hash, $factura->facid);
 
         switch ($resp['status']) {
             case 'accepted':
