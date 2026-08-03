@@ -11,18 +11,18 @@ class EventosSignificativo extends Model
     protected $table = 'eventos_significativos';
     protected $primaryKey = 'eveid';
 
-    protected const COD_CORTE_INTERNET = 1;
-    protected const COD_SIN_INACCESIBLE = 2;
-    protected const COD_CORTE_ENERGIA = 3;
-    protected const COD_FALLA_SOFTWARE = 4;
-    protected const COD_CAMBIO_INFRA = 5;
-    protected const COD_FALLA_COMMS = 6;
-    protected const COD_FUERZA_MAYOR = 7;
+    public const COD_CORTE_INTERNET = 1;
+    public const COD_SIN_INACCESIBLE = 2;
+    public const COD_CORTE_ENERGIA = 3;
+    public const COD_FALLA_SOFTWARE = 4;
+    public const COD_CAMBIO_INFRA = 5;
+    public const COD_FALLA_COMMS = 6;
+    public const COD_FUERZA_MAYOR = 7;
 
-    protected const ESTADO_ACTIVO = 'activo';
-    protected const ESTADO_CERRADO = 'cerrado';
-    protected const ESTADO_REGISTRADO = 'registrado';
-    protected const ESTADO_FALLIDO = 'fallido';
+    public const ESTADO_ACTIVO = 'activo';
+    public const ESTADO_CERRADO = 'cerrado';
+    public const ESTADO_REGISTRADO = 'registrado';
+    public const ESTADO_FALLIDO = 'fallido';
 
     protected $fillable = [
         'emiid',
@@ -59,5 +59,10 @@ class EventosSignificativo extends Model
     public function scopeDisponibleParaAcoplar($query)
     {
         return $query->whereIn('eveest', [self::ESTADO_ACTIVO, self::ESTADO_CERRADO])->whereNull('evecodrec');
+    }
+
+    public function scopeActivoDe($query, int $emiid)
+    {
+        return $query->where('emiid', $emiid)->where('eveest', self::ESTADO_ACTIVO)->latest('eveini');
     }
 }

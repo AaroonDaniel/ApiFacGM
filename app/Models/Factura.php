@@ -19,6 +19,7 @@ class Factura extends Model
     public const SIAT_RECHAZADA = 'rechazada';
     public const SIAT_OFFLINE = 'offline';
     public const SIAT_ERROR = 'error';
+    public const SIAT_EMPAQUETADA = 'empaquetada'; // offline, paquete ya enviado, esperando validación
 
     protected $fillable = [
         'emiid',

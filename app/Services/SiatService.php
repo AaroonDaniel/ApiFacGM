@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Emisor;
 use App\Models\SiatCodigo;
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use SoapClient;
 use SoapFault;
 use Exception;
@@ -147,9 +148,17 @@ class SiatService
     {
         $msg = strtolower($fault->getMessage());
         $signals = [
+            // Fallos de red local (nuestra conectividad).
             'could not connect', 'timed out', 'timeout', 'failed to load external entity',
-            'connection refused', 'name or service not known',
+            'connection refused', 'name or service not known', 'could not resolve host',
             'temporary failure in name resolution', 'ssl', 'could not fetch http headers',
+            'no se pudo descargar el wsdl',
+            // Caída del lado del SIAT (5xx en la respuesta HTTP del propio SIN).
+            // OJO: 401/403 NO se incluyen a propósito — son rechazos de
+            // autenticación/autorización (credenciales, límites, etc.), no
+            // evidencia de que el SIAT esté caído; tratarlos como offline
+            // generaría eventos de contingencia falsos.
+            'http 500', 'http 502', 'http 503', 'http 504',
         ];
 
         foreach ($signals as $s) {
@@ -388,6 +397,155 @@ class SiatService
             return [
                 'status'  => $this->isNetworkFailure($fault) ? 'offline' : 'rejected',
                 'codigoRecepcion' => null, 'mensaje' => $fault->getMessage(), 'raw' => null,
+            ];
+        }
+    }
+
+    // ==========================================
+    // CONTINGENCIA (EVENTOS SIGNIFICATIVOS Y PAQUETES OFFLINE)
+    // ==========================================
+
+    /**
+     * Registra ante el SIAT un Evento Significativo ya CERRADO (con inicio
+     * y fin conocidos). En nuestro modelo el evento se declara de forma
+     * retroactiva: se detecta la falla, se sigue facturando offline, y solo
+     * al recuperar conexión se informa al SIAT el período que estuvo caído.
+     *
+     * $cufdAuth: CUFD vigente AHORA (para autenticar esta llamada, ya en línea).
+     * $cufdEvento: el CUFD que realmente se usó para las facturas offline
+     *              durante la contingencia (el que ya no era válido en ese momento).
+     */
+    public function registrarEventoSignificativo(
+        string $cuis,
+        string $cufdAuth,
+        int $codigoMotivo,
+        string $descripcion,
+        CarbonInterface $inicio,
+        CarbonInterface $fin,
+        string $cufdEvento
+    ): array {
+        try {
+            $client = $this->getSoapClient('FacturacionOperaciones');
+
+            $params = ['SolicitudEventoSignificativo' => array_merge($this->getBaseParameters(false), [
+                'codigoMotivoEvento'     => $codigoMotivo,
+                'cufd'                   => $cufdAuth,
+                'cufdEvento'             => $cufdEvento,
+                'cuis'                   => $cuis,
+                'descripcion'            => $descripcion,
+                'fechaHoraInicioEvento'  => $inicio->format('Y-m-d\TH:i:s.v'),
+                'fechaHoraFinEvento'     => $fin->format('Y-m-d\TH:i:s.v'),
+            ])];
+
+            $response = $client->registroEventoSignificativo($params);
+            $r = $response->RespuestaListaEventos ?? null;
+
+            if ($r && !empty($r->transaccion)) {
+                return [
+                    'success'         => true,
+                    'codigoRecepcion' => $r->codigoRecepcionEventoSignificativo ?? null,
+                ];
+            }
+
+            return ['success' => false, 'mensaje' => $this->extractSiatMessage($r)];
+        } catch (SoapFault $fault) {
+            Log::error('SIAT registrarEventoSignificativo: ' . $fault->getMessage());
+            return [
+                'success' => false,
+                'offline' => $this->isNetworkFailure($fault),
+                'mensaje' => $fault->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Envía el paquete (.tar.gz de varias facturas offline) referenciando
+     * el código de recepción del Evento Significativo ya registrado.
+     */
+    public function enviarPaqueteOffline(
+        string $cuis,
+        string $cufd,
+        string $archivoBase64,
+        string $issueDate,
+        string $hashArchivo,
+        int $cantidadFacturas,
+        string $codigoEvento
+    ): array {
+        try {
+            $client = $this->getSoapClient('ServicioFacturacionCompraVenta');
+
+            $params = ['SolicitudServicioRecepcionPaquete' => array_merge($this->getBaseParameters(), [
+                'codigoDocumentoSector' => 1,
+                'codigoEmision'         => 2, // offline
+                'tipoFacturaDocumento'  => 1,
+                'cuis'                  => $cuis,
+                'cufd'                  => $cufd,
+                'archivo'               => $archivoBase64,
+                'fechaEnvio'            => $issueDate,
+                'hashArchivo'           => $hashArchivo,
+                'cantidadFacturas'      => $cantidadFacturas,
+                'codigoEvento'          => $codigoEvento,
+            ])];
+
+            $response = $client->recepcionPaqueteFactura($params);
+            $r = $response->RespuestaServicioFacturacion ?? null;
+
+            if ($r && !empty($r->transaccion)) {
+                return ['status' => 'received', 'codigoRecepcion' => $r->codigoRecepcion ?? null,
+                    'mensaje' => 'Paquete recibido por el SIAT, pendiente de validación', 'raw' => $response];
+            }
+
+            return ['status' => 'rejected', 'codigoRecepcion' => null,
+                'mensaje' => $this->extractSiatMessage($r), 'raw' => $response];
+        } catch (SoapFault $fault) {
+            Log::error('SIAT enviarPaqueteOffline: ' . $fault->getMessage());
+            return [
+                'status'  => $this->isNetworkFailure($fault) ? 'offline' : 'rejected',
+                'codigoRecepcion' => null, 'mensaje' => $fault->getMessage(), 'raw' => null,
+            ];
+        }
+    }
+
+    /**
+     * Consulta el resultado de validación de un paquete ya enviado.
+     * status: 'accepted' | 'observed' | 'rejected' | 'processing'
+     */
+    public function validarPaqueteOffline(string $cuis, string $cufd, string $codigoRecepcionPaquete): array
+    {
+        try {
+            $client = $this->getSoapClient('ServicioFacturacionCompraVenta');
+
+            $params = ['SolicitudServicioValidacionRecepcionPaquete' => array_merge($this->getBaseParameters(), [
+                'codigoDocumentoSector' => 1,
+                'codigoEmision'         => 2,
+                'tipoFacturaDocumento'  => 1,
+                'cuis'                  => $cuis,
+                'cufd'                  => $cufd,
+                'codigoRecepcion'       => $codigoRecepcionPaquete,
+            ])];
+
+            $response = $client->validacionRecepcionPaqueteFactura($params);
+            $r = $response->RespuestaServicioFacturacion ?? null;
+
+            $codigoDescripcion = strtoupper($r->codigoDescripcion ?? '');
+
+            return [
+                'status' => match (true) {
+                    $codigoDescripcion === 'VALIDADA'   => 'accepted',
+                    $codigoDescripcion === 'OBSERVADA'  => 'observed',
+                    $codigoDescripcion === 'RECHAZADA'  => 'rejected',
+                    $codigoDescripcion === 'EN PROCESO' => 'processing',
+                    default                              => 'rejected',
+                },
+                'mensaje' => $this->extractSiatMessage($r),
+                'raw'     => $response,
+            ];
+        } catch (SoapFault $fault) {
+            Log::error('SIAT validarPaqueteOffline: ' . $fault->getMessage());
+            return [
+                'status'  => $this->isNetworkFailure($fault) ? 'offline' : 'rejected',
+                'mensaje' => $fault->getMessage(),
+                'raw'     => null,
             ];
         }
     }

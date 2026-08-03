@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Emisor;
+use App\Models\EventosSignificativo;
 use App\Models\Factura;
 use App\Models\Secuencia;
 use App\Models\SiatCodigo;
@@ -11,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Exception;
+use Throwable;
 
 /**
  * Orquesta la emisión de una factura con el patrón de DOS FASES:
@@ -84,12 +86,43 @@ class EmisionService
     private function enviarAlSiat(Emisor $emisor, Factura $factura): void
     {
         $siat = new SiatService($emisor);
+        $contingencia = new ContingenciaService();
 
-        // Resolver CUFD vigente del emisor.
+        // Ya hay una contingencia declarada para este emisor: antes de irnos
+        // offline de nuevo, hacemos un chequeo liviano de comunicación. Si
+        // sigue caído, evitamos la danza completa de CUFD/CUIS/envío. Si
+        // responde, dejamos caer al flujo normal de abajo — al aceptarse la
+        // factura, eso dispara la reconciliación del evento pendiente.
+        $eventoActivo = EventosSignificativo::activoDe($emisor->emiid)->first();
+        if ($eventoActivo) {
+            $comunicacion = $siat->verifyCommunication();
+            if (!($comunicacion['success'] ?? false)) {
+                $this->emitirOffline($factura, $emisor, $eventoActivo->evecufd, $eventoActivo->evecufdctrl, $contingencia);
+                Log::warning("Factura #{$factura->facnro} en offline (contingencia activa, evento {$eventoActivo->eveid}).");
+                return;
+            }
+        }
+
+        // Resolver CUFD vigente del emisor (intenta red).
         $cufd = $siat->getActiveCufd();
+
         if (!$cufd instanceof SiatCodigo) {
-            $factura->update(['facsiatest' => Factura::SIAT_ERROR]);
-            Log::error("Factura #{$factura->facnro}: no se pudo obtener CUFD del emisor {$emisor->eminit}.");
+            // ¿Nunca hubo un CUFD para este emisor (config incompleta), o el
+            // SIAT está inalcanzable y ya teníamos uno antes? Solo en el
+            // segundo caso se autoriza el modo offline.
+            $ultimoConocido = SiatCodigo::where('emiid', $emisor->emiid)
+                ->where('scotipo', SiatCodigo::TIPO_CUFD)
+                ->latest('scoemi')
+                ->first();
+
+            if (!$ultimoConocido) {
+                $factura->update(['facsiatest' => Factura::SIAT_ERROR]);
+                Log::error("Factura #{$factura->facnro}: no se pudo obtener CUFD y nunca hubo uno previo para el emisor {$emisor->eminit}.");
+                return;
+            }
+
+            $this->emitirOffline($factura, $emisor, $ultimoConocido->scovalor, $ultimoConocido->scocodctrl, $contingencia);
+            Log::warning("Factura #{$factura->facnro} en offline (SIAT inalcanzable al pedir CUFD).");
             return;
         }
 
@@ -119,11 +152,23 @@ class EmisionService
                     'facsiatest' => Factura::SIAT_ACEPTADA,
                     'faccodrec'  => $resp['codigoRecepcion'] ?? null,
                 ]);
+
+                // Si veníamos de una contingencia, esto prueba que la
+                // conexión volvió: reconciliar el evento pendiente.
+                $eventoPendiente = EventosSignificativo::activoDe($emisor->emiid)->first();
+                if ($eventoPendiente) {
+                    try {
+                        $contingencia->reconciliar($eventoPendiente, $emisor);
+                    } catch (Throwable $e) {
+                        Log::error("Reconciliación del evento {$eventoPendiente->eveid} falló: " . $e->getMessage());
+                    }
+                }
                 break;
 
             case 'offline':
                 $path = $this->guardarXmlOffline($gzip, $factura);
                 $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
+                $contingencia->acoplar($factura, $emisor, $cufd->scovalor, $cufd->scocodctrl);
                 Log::warning("Factura #{$factura->facnro} en offline (SIAT inaccesible).");
                 break;
 
@@ -131,6 +176,30 @@ class EmisionService
                 $factura->update(['facsiatest' => Factura::SIAT_RECHAZADA]);
                 Log::warning("Factura #{$factura->facnro} rechazada: " . ($resp['mensaje'] ?? ''));
         }
+    }
+
+    /**
+     * Construye el XML/CUF con un CUFD dado (vigente o de contingencia) y
+     * guarda la factura como offline, acoplándola al evento significativo.
+     */
+    private function emitirOffline(
+        Factura $factura,
+        Emisor $emisor,
+        string $cufdValor,
+        string $controlCode,
+        ContingenciaService $contingencia
+    ): void {
+        $factura->load('detalles');
+        $builder = new SiatXmlBuilder($factura, $emisor, $cufdValor, $controlCode);
+        $gzip    = $builder->getGzipArchive();
+        $cuf     = $builder->generateCuf();
+
+        $factura->update(['faccuf' => $cuf, 'faccufd' => $cufdValor]);
+
+        $path = $this->guardarXmlOffline($gzip, $factura);
+        $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
+
+        $contingencia->acoplar($factura, $emisor, $cufdValor, $controlCode);
     }
 
     private function siguienteNumero(Emisor $emisor): int
