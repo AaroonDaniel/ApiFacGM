@@ -8,5 +8,7 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
-Route::post('/facturas', [FacturaController::class, 'store']);
-Route::get('/facturas/{factura}', [FacturaController::class, 'show']);
+Route::middleware('sistema.auth')->group(function () {
+    Route::post('/facturas', [FacturaController::class, 'store']);
+    Route::get('/facturas/{factura}', [FacturaController::class, 'show']);
+});

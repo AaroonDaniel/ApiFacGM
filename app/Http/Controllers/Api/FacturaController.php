@@ -63,7 +63,7 @@ class FacturaController extends Controller
                 'metodo_pago'         => $datos['metodo_pago'],
                 'descuento_adicional' => $datos['descuento_adicional'] ?? 0,
                 'referencia_externa'  => $datos['referencia_externa'] ?? null,
-                'sistema_origen'      => 'pendiente', // luego vendrá del sistema autenticado (JWT)
+                'sistema_origen'      => $request->attributes->get('sistemaCliente')->siscod,
             ]);
         } catch (Throwable $e) {
             return response()->json([
@@ -72,31 +72,42 @@ class FacturaController extends Controller
             ], 500);
         }
 
-        // 4. Responder según el estado final.
-        return $this->respuesta($factura);
+        // 4. Responder según el estado final (201/200/422 — recién creada).
+        $codigo = match ($factura->facsiatest) {
+            Factura::SIAT_ACEPTADA  => 201,
+            Factura::SIAT_OFFLINE   => 200,
+            Factura::SIAT_RECHAZADA => 422,
+            default                 => 200,
+        };
+
+        return response()->json($this->payload($factura), $codigo);
     }
 
     /**
      * GET /api/facturas/{factura} — consultar una factura.
+     *
+     * Siempre responde 200: se trata de una lectura, no de un intento de
+     * emisión, así que el estado SIAT de la factura no debe alterar el
+     * código HTTP.
      */
-    public function show(Factura $factura): JsonResponse
+    public function show(Request $request, Factura $factura): JsonResponse
     {
-        return $this->respuesta($factura->load('detalles'));
+        if ($factura->facsisorig !== $request->attributes->get('sistemaCliente')->siscod) {
+            return response()->json([
+                'exito' => false,
+                'error' => 'No tienes acceso a esta factura.',
+            ], 403);
+        }
+
+        return response()->json($this->payload($factura->load('detalles')), 200);
     }
 
     /**
-     * Arma la respuesta JSON a partir del estado de la factura.
+     * Arma el cuerpo JSON con el estado de la factura.
      */
-    private function respuesta(Factura $factura): JsonResponse
+    private function payload(Factura $factura): array
     {
-        $codigo = match ($factura->facsiatest) {
-            Factura::SIAT_ACEPTADA => 201,
-            Factura::SIAT_OFFLINE  => 200,
-            Factura::SIAT_RECHAZADA => 422,
-            default                => 200,
-        };
-
-        return response()->json([
+        return [
             'exito'   => in_array($factura->facsiatest, [Factura::SIAT_ACEPTADA, Factura::SIAT_OFFLINE]),
             'factura' => [
                 'id'               => $factura->facid,
@@ -107,6 +118,6 @@ class FacturaController extends Controller
                 'codigo_recepcion' => $factura->faccodrec,
                 'fecha_emision'    => $factura->fachora?->format('Y-m-d\TH:i:s.v'),
             ],
-        ], $codigo);
+        ];
     }
 }
