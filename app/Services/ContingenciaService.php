@@ -38,11 +38,14 @@ class ContingenciaService
     public function acoplar(Factura $factura, Emisor $emisor, string $cufdUsado, string $controlCodeUsado): EventosSignificativo
     {
         return DB::transaction(function () use ($factura, $emisor, $cufdUsado, $controlCodeUsado) {
-            $evento = EventosSignificativo::activoDe($emisor->emiid)->lockForUpdate()->first();
+            $evento = EventosSignificativo::activoDe($emisor->emiid, $factura->facsuc, $factura->facpdv)
+                ->lockForUpdate()->first();
 
             if (!$evento) {
                 $evento = EventosSignificativo::create([
                     'emiid'       => $emisor->emiid,
+                    'evesuc'      => $factura->facsuc,
+                    'evepdv'      => $factura->facpdv,
                     'evecod'      => EventosSignificativo::COD_SIN_INACCESIBLE,
                     'evedesc'     => 'SIAT inaccesible (detectado automáticamente)',
                     'eveini'      => $factura->fachora ?? now(),
@@ -73,7 +76,7 @@ class ContingenciaService
             return;
         }
 
-        $siat = new SiatService($emisor);
+        $siat = new SiatService($emisor, $evento->evesuc, $evento->evepdv);
 
         $cuis = $siat->getActiveCuis();
         if (!$cuis) {
@@ -171,7 +174,7 @@ class ContingenciaService
             throw new \Exception("El evento {$evento->eveid} no tiene un paquete enviado que validar.");
         }
 
-        $siat = new SiatService($emisor);
+        $siat = new SiatService($emisor, $evento->evesuc, $evento->evepdv);
         $cuis = $siat->getActiveCuis();
         $cufd = $siat->getActiveCufd();
 

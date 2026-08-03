@@ -78,13 +78,13 @@ class SiatXmlBuilder
     {
         return SiatUtils::buildCuf($this->controlCode, $this->issuedAt, [
             'nit'          => $this->emisor->eminit,
-            'branch'       => $this->emisor->emisuc,
+            'branch'       => $this->factura->facsuc,
             'modality'     => $this->emisor->emimod,
             'emissionType' => $this->emissionType,
             'invoiceType'  => 1, // 1 = Factura con Derecho a Crédito Fiscal
             'sectorDoc'    => 1, // 01 = Compra Venta
             'number'       => $this->factura->facnro,
-            'pos'          => $this->emisor->emipdv,
+            'pos'          => $this->factura->facpdv,
         ]);
     }
 
@@ -132,14 +132,14 @@ class SiatXmlBuilder
         $this->appendText($header, 'numeroFactura', (string) $f->facnro);
         $this->appendText($header, 'cuf', $this->generateCuf());
         $this->appendText($header, 'cufd', $this->cufdCode);
-        $this->appendText($header, 'codigoSucursal', (string) $e->emisuc);
+        $this->appendText($header, 'codigoSucursal', (string) $f->facsuc);
         $this->appendText($header, 'direccion', $e->emidir);
 
         // Punto de venta: nil si es 0 (casa matriz).
-        if ((int) $e->emipdv === 0) {
+        if ((int) $f->facpdv === 0) {
             $this->appendNil($header, 'codigoPuntoVenta');
         } else {
-            $this->appendText($header, 'codigoPuntoVenta', (string) $e->emipdv);
+            $this->appendText($header, 'codigoPuntoVenta', (string) $f->facpdv);
         }
 
         $this->appendText($header, 'fechaEmision', $this->issuedAt->format('Y-m-d\TH:i:s.v'));

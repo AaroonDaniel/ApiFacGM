@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Emisor;
 use App\Models\Factura;
+use App\Models\PuntoVenta;
 use App\Services\AnulacionService;
 use App\Services\EmisionService;
 use Illuminate\Http\Request;
@@ -27,6 +28,8 @@ class FacturaController extends Controller
         // 1. Validar la estructura del JSON entrante.
         $datos = $request->validate([
             'emisor_nit'                      => 'required|string',
+            'punto_venta.sucursal'            => 'nullable|integer|min:0',
+            'punto_venta.punto_venta'         => 'nullable|integer|min:0',
             'referencia_externa'              => 'nullable|string|max:100',
             'metodo_pago'                     => 'required|integer',
             'descuento_adicional'             => 'nullable|numeric|min:0',
@@ -58,9 +61,27 @@ class FacturaController extends Controller
             ], 422);
         }
 
+        // 2b. Resolver el punto de venta: el indicado en la petición, o el
+        // (0,0) por defecto del emisor si no se especifica ninguno.
+        $sucursal = $datos['punto_venta']['sucursal'] ?? $emisor->emisuc;
+        $pdv      = $datos['punto_venta']['punto_venta'] ?? $emisor->emipdv;
+
+        $pv = PuntoVenta::where('emiid', $emisor->emiid)
+            ->where('pvsuc', $sucursal)
+            ->where('pvpdv', $pdv)
+            ->where('pvest', true)
+            ->first();
+
+        if (!$pv) {
+            return response()->json([
+                'exito' => false,
+                'error' => "No existe un punto de venta activo (sucursal {$sucursal}, PDV {$pdv}) para este emisor.",
+            ], 422);
+        }
+
         // 3. Delegar la emisión al servicio.
         try {
-            $factura = $this->emisionService->emitir($emisor, [
+            $factura = $this->emisionService->emitir($emisor, $pv, [
                 'cliente'             => $datos['cliente'],
                 'detalle'             => $datos['detalle'],
                 'metodo_pago'         => $datos['metodo_pago'],

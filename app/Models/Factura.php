@@ -23,6 +23,8 @@ class Factura extends Model
 
     protected $fillable = [
         'emiid',
+        'facsuc',
+        'facpdv',
         'facnro',
         'faccuf',
         'faccufd',
@@ -49,6 +51,8 @@ class Factura extends Model
     ];
 
     protected $casts = [
+        'facsuc'      => 'integer',
+        'facpdv'      => 'integer',
         'facfch'      => 'date',
         'fachora'     => 'datetime',
         'facfchanul'  => 'datetime',

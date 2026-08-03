@@ -32,7 +32,9 @@ class AnulacionService
         }
 
         $emisor = $factura->emisor;
-        $siat   = new SiatService($emisor);
+        // El mismo punto de venta bajo el que se emitió — no el (0,0) por
+        // defecto del emisor, que puede no ser el correcto si tiene varios.
+        $siat = new SiatService($emisor, $factura->facsuc, $factura->facpdv);
 
         $cuis = $siat->getActiveCuis();
         $cufd = $siat->getActiveCufd();

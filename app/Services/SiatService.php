@@ -29,18 +29,20 @@ class SiatService
     protected int $timeout;
 
     /**
-     * Se construye POR EMISOR. Las credenciales salen de la fila `emisores`,
-     * no de config/siat.php.
+     * Se construye POR EMISOR (el token es compartido por NIT, sale de la
+     * fila `emisores`, no de config/siat.php) y opcionalmente por un punto
+     * de venta específico — si no se indica, usa el (0,0) del emisor, que
+     * sigue siendo válido para emisores con una sola dosificación.
      */
-    public function __construct(Emisor $emisor)
+    public function __construct(Emisor $emisor, ?int $branchCode = null, ?int $posCode = null)
     {
         $this->emisor      = $emisor;
 
         $this->token       = $emisor->emitoken;   // descifrado automáticamente por el cast
         $this->systemCode  = $emisor->emisis;
         $this->nit         = $emisor->eminit;
-        $this->branchCode  = $emisor->emisuc;
-        $this->posCode     = $emisor->emipdv;
+        $this->branchCode  = $branchCode ?? $emisor->emisuc;
+        $this->posCode     = $posCode ?? $emisor->emipdv;
         $this->environment = $emisor->emiamb;
         $this->modality    = $emisor->emimod;
 
@@ -370,6 +372,9 @@ class SiatService
         $cufd = SiatCodigo::query()
             ->where('emiid', $this->emisor->emiid)
             ->where('scotipo', SiatCodigo::TIPO_CUFD)
+            ->where('scoamb', $this->environment)
+            ->where('scosuc', $this->branchCode)
+            ->where('scopdv', $this->posCode)
             ->where('scoest', true)
             ->where('scoven', '>', Carbon::now())
             ->latest('scoven')

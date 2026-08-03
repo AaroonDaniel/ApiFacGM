@@ -26,6 +26,8 @@ class EventosSignificativo extends Model
 
     protected $fillable = [
         'emiid',
+        'evesuc',
+        'evepdv',
         'evecod',
         'evedesc',
         'eveini',
@@ -40,6 +42,8 @@ class EventosSignificativo extends Model
     ];
 
     protected $casts = [
+        'evesuc' => 'integer',
+        'evepdv' => 'integer',
         'eveini' => 'datetime',
         'evefin' => 'datetime',
         'evereg' => 'datetime',
@@ -61,20 +65,32 @@ class EventosSignificativo extends Model
         return $query->whereIn('eveest', [self::ESTADO_ACTIVO, self::ESTADO_CERRADO])->whereNull('evecodrec');
     }
 
-    public function scopeActivoDe($query, int $emiid)
+    /**
+     * Evento activo de un emisor PARA UN PUNTO DE VENTA ESPECÍFICO — cada
+     * sucursal/PDV tiene su propia dosificación (y su propio CUFD), así
+     * que una caída en uno no debe mezclarse con la de otro.
+     */
+    public function scopeActivoDe($query, int $emiid, int $suc = 0, int $pdv = 0)
     {
-        return $query->where('emiid', $emiid)->where('eveest', self::ESTADO_ACTIVO)->latest('eveini');
+        return $query->where('emiid', $emiid)
+            ->where('evesuc', $suc)
+            ->where('evepdv', $pdv)
+            ->where('eveest', self::ESTADO_ACTIVO)
+            ->latest('eveini');
     }
 
     /**
-     * Eventos de un emisor que todavía no terminaron de reconciliarse
-     * (registrados o no ante el SIAT, pero sin paquete enviado con éxito).
-     * A diferencia de scopeActivoDe(), incluye los ya cerrados localmente
-     * cuyo envío del paquete falló y quedó pendiente de reintento.
+     * Eventos de un emisor+punto de venta que todavía no terminaron de
+     * reconciliarse (registrados o no ante el SIAT, pero sin paquete
+     * enviado con éxito). A diferencia de scopeActivoDe(), incluye los ya
+     * cerrados localmente cuyo envío del paquete falló y quedó pendiente
+     * de reintento.
      */
-    public function scopePendienteDeEnvio($query, int $emiid)
+    public function scopePendienteDeEnvio($query, int $emiid, int $suc = 0, int $pdv = 0)
     {
         return $query->where('emiid', $emiid)
+            ->where('evesuc', $suc)
+            ->where('evepdv', $pdv)
             ->whereIn('eveest', [self::ESTADO_ACTIVO, self::ESTADO_CERRADO])
             ->whereNull('evecodrecpaq')
             ->latest('eveini');

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Emisor;
 use App\Models\EventosSignificativo;
 use App\Models\Factura;
+use App\Models\PuntoVenta;
 use App\Models\Secuencia;
 use App\Models\SiatCodigo;
 use Carbon\Carbon;
@@ -23,14 +24,16 @@ use Throwable;
 class EmisionService
 {
     /**
-     * Emite una factura para un emisor a partir de datos ya validados.
+     * Emite una factura para un emisor y un punto de venta (sucursal +
+     * punto de venta) específico a partir de datos ya validados.
      *
-     * @param Emisor $emisor
-     * @param array  $datos  ['cliente' => [...], 'detalle' => [...], 'metodo_pago' => int,
-     *                        'descuento_adicional' => float, 'referencia_externa' => ?string,
-     *                        'sistema_origen' => string]
+     * @param Emisor     $emisor
+     * @param PuntoVenta $puntoVenta  Dosificación a la que pertenece la factura.
+     * @param array      $datos  ['cliente' => [...], 'detalle' => [...], 'metodo_pago' => int,
+     *                            'descuento_adicional' => float, 'referencia_externa' => ?string,
+     *                            'sistema_origen' => string]
      */
-    public function emitir(Emisor $emisor, array $datos): Factura
+    public function emitir(Emisor $emisor, PuntoVenta $puntoVenta, array $datos): Factura
     {
         // Idempotencia: si un sistema cliente reintenta la misma petición
         // (ej. por timeout de red) con la misma referencia_externa, se
@@ -53,13 +56,15 @@ class EmisionService
 
         // -------- FASE 1: persistir --------
         try {
-            $factura = DB::transaction(function () use ($emisor, $datos) {
-                $numero = $this->siguienteNumero($emisor);
+            $factura = DB::transaction(function () use ($emisor, $puntoVenta, $datos) {
+                $numero = $this->siguienteNumero($emisor, $puntoVenta);
 
                 $totales = $this->calcularTotales($datos['detalle'], $datos['descuento_adicional'] ?? 0);
 
                 $factura = Factura::create([
                     'emiid'        => $emisor->emiid,
+                    'facsuc'       => $puntoVenta->pvsuc,
+                    'facpdv'       => $puntoVenta->pvpdv,
                     'facnro'       => $numero,
                     'facfch'       => now()->format('Y-m-d'),
                     'fachora'      => now(),
@@ -113,7 +118,7 @@ class EmisionService
         }
 
         // -------- FASE 2: enviar al SIAT (fuera de la transacción) --------
-        $this->enviarAlSiat($emisor, $factura);
+        $this->enviarAlSiat($emisor, $puntoVenta, $factura);
 
         return $factura->refresh();
     }
@@ -126,27 +131,28 @@ class EmisionService
      * inesperado revienta acá, se marca 'error' en vez de dejarla en
      * 'pendiente' para siempre sin que el cliente se entere de su ID.
      */
-    private function enviarAlSiat(Emisor $emisor, Factura $factura): void
+    private function enviarAlSiat(Emisor $emisor, PuntoVenta $puntoVenta, Factura $factura): void
     {
         try {
-            $this->procesarEnvio($emisor, $factura);
+            $this->procesarEnvio($emisor, $puntoVenta, $factura);
         } catch (Throwable $e) {
             $factura->update(['facsiatest' => Factura::SIAT_ERROR]);
             Log::error("Factura #{$factura->facnro}: error inesperado en FASE 2, marcada como error. " . $e->getMessage());
         }
     }
 
-    private function procesarEnvio(Emisor $emisor, Factura $factura): void
+    private function procesarEnvio(Emisor $emisor, PuntoVenta $puntoVenta, Factura $factura): void
     {
-        $siat = new SiatService($emisor);
+        $siat = new SiatService($emisor, $puntoVenta->pvsuc, $puntoVenta->pvpdv);
         $contingencia = new ContingenciaService();
 
-        // Ya hay una contingencia declarada para este emisor: antes de irnos
-        // offline de nuevo, hacemos un chequeo liviano de comunicación. Si
-        // sigue caído, evitamos la danza completa de CUFD/CUIS/envío. Si
-        // responde, dejamos caer al flujo normal de abajo — al aceptarse la
-        // factura, eso dispara la reconciliación del evento pendiente.
-        $eventoActivo = EventosSignificativo::activoDe($emisor->emiid)->first();
+        // Ya hay una contingencia declarada para este emisor+punto de venta:
+        // antes de irnos offline de nuevo, hacemos un chequeo liviano de
+        // comunicación. Si sigue caído, evitamos la danza completa de
+        // CUFD/CUIS/envío. Si responde, dejamos caer al flujo normal de
+        // abajo — al aceptarse la factura, eso dispara la reconciliación
+        // del evento pendiente.
+        $eventoActivo = EventosSignificativo::activoDe($emisor->emiid, $puntoVenta->pvsuc, $puntoVenta->pvpdv)->first();
         if ($eventoActivo) {
             $comunicacion = $siat->verifyCommunication();
             if (!($comunicacion['success'] ?? false)) {
@@ -165,6 +171,8 @@ class EmisionService
             // segundo caso se autoriza el modo offline.
             $ultimoConocido = SiatCodigo::where('emiid', $emisor->emiid)
                 ->where('scotipo', SiatCodigo::TIPO_CUFD)
+                ->where('scosuc', $puntoVenta->pvsuc)
+                ->where('scopdv', $puntoVenta->pvpdv)
                 ->latest('scoemi')
                 ->first();
 
@@ -209,7 +217,7 @@ class EmisionService
                 // Si veníamos de una contingencia, esto prueba que la
                 // conexión volvió: reconciliar el evento pendiente (incluye
                 // eventos ya cerrados cuyo envío del paquete falló antes).
-                $eventoPendiente = EventosSignificativo::pendienteDeEnvio($emisor->emiid)->first();
+                $eventoPendiente = EventosSignificativo::pendienteDeEnvio($emisor->emiid, $puntoVenta->pvsuc, $puntoVenta->pvpdv)->first();
                 if ($eventoPendiente) {
                     try {
                         $contingencia->reconciliar($eventoPendiente, $emisor);
@@ -256,17 +264,17 @@ class EmisionService
         $contingencia->acoplar($factura, $emisor, $cufdValor, $controlCode);
     }
 
-    private function siguienteNumero(Emisor $emisor): int
+    private function siguienteNumero(Emisor $emisor, PuntoVenta $puntoVenta): int
     {
         $secuencia = Secuencia::where('emiid', $emisor->emiid)
-            ->where('secsuc', $emisor->emisuc)
-            ->where('secpdv', $emisor->emipdv)
+            ->where('secsuc', $puntoVenta->pvsuc)
+            ->where('secpdv', $puntoVenta->pvpdv)
             ->where('sectipodoc', 1)
             ->lockForUpdate()
             ->first();
 
         if (!$secuencia) {
-            throw new Exception('No hay secuencia configurada para este emisor.');
+            throw new Exception("No hay secuencia configurada para el punto de venta (sucursal {$puntoVenta->pvsuc}, PDV {$puntoVenta->pvpdv}).");
         }
 
         $nuevoNumero = $secuencia->secultimo + 1;
