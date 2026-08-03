@@ -65,15 +65,22 @@ class ContingenciaService
      * Cierra el evento activo, lo registra ante el SIAT y envía el paquete
      * con todas las facturas acopladas. Se llama cuando se detecta que la
      * conexión volvió (una factura logró emitirse online normalmente).
+     *
+     * Devuelve true solo si de verdad se avanzó (registro y/o envío del
+     * paquete confirmados por el SIAT) — false en cualquier salida
+     * temprana. No basta con "no lanzó excepción": antes esta función
+     * podía terminar sin hacer nada real y el llamador lo reportaba como
+     * éxito igual.
      */
-    public function reconciliar(EventosSignificativo $evento, Emisor $emisor): void
+    public function reconciliar(EventosSignificativo $evento, Emisor $emisor): bool
     {
         $facturas = $evento->facturas()->where('facsiatest', Factura::SIAT_OFFLINE)->get();
 
         if ($facturas->isEmpty()) {
             // Evento sin facturas asociadas (no debería pasar); lo cerramos igual.
+            Log::warning("Contingencia emisor {$emisor->eminit}: evento {$evento->eveid} no tiene facturas offline asociadas, se cierra sin registrar.");
             $evento->update(['eveest' => EventosSignificativo::ESTADO_CERRADO, 'evefin' => now()]);
-            return;
+            return false;
         }
 
         $siat = new SiatService($emisor, $evento->evesuc, $evento->evepdv);
@@ -81,13 +88,13 @@ class ContingenciaService
         $cuis = $siat->getActiveCuis();
         if (!$cuis) {
             Log::error("Contingencia emisor {$emisor->eminit}: sin CUIS para reconciliar evento {$evento->eveid}.");
-            return;
+            return false;
         }
 
         $cufdActual = $siat->getActiveCufd();
         if (!$cufdActual) {
             Log::error("Contingencia emisor {$emisor->eminit}: sin CUFD vigente para reconciliar evento {$evento->eveid}.");
-            return;
+            return false;
         }
 
         // Reanudable: si ya se registró el evento ante el SIAT en un intento
@@ -98,6 +105,13 @@ class ContingenciaService
         } else {
             $inicio = $evento->eveini;
             $fin    = $facturas->max('fachora') ?? now();
+
+            // El SIAT rechaza un evento con duración cero (rango de fechas
+            // inválido) — pasa con eventos de una sola factura, donde
+            // inicio y fin serían el mismo instante exacto.
+            if ($fin->lessThanOrEqualTo($inicio)) {
+                $fin = $inicio->copy()->addSecond();
+            }
 
             $registro = $siat->registrarEventoSignificativo(
                 $cuis,
@@ -112,7 +126,7 @@ class ContingenciaService
             if (!($registro['success'] ?? false)) {
                 Log::error("Contingencia emisor {$emisor->eminit}: no se pudo registrar el evento {$evento->eveid} ante el SIAT. "
                     . ($registro['mensaje'] ?? ''));
-                return;
+                return false;
             }
 
             $evento->update([
@@ -135,7 +149,7 @@ class ContingenciaService
 
         if (empty($paquete)) {
             Log::error("Contingencia emisor {$emisor->eminit}: evento {$evento->eveid} registrado pero sin XML válidos para empaquetar.");
-            return;
+            return false;
         }
 
         $builder = new SiatOfflinePackageBuilder();
@@ -154,7 +168,7 @@ class ContingenciaService
         if (($envio['status'] ?? null) !== 'received') {
             Log::error("Contingencia emisor {$emisor->eminit}: paquete del evento {$evento->eveid} no fue recibido. "
                 . ($envio['mensaje'] ?? ''));
-            return;
+            return false;
         }
 
         $evento->update(['evecodrecpaq' => $envio['codigoRecepcion']]);
@@ -162,6 +176,8 @@ class ContingenciaService
 
         Log::info("Contingencia emisor {$emisor->eminit}: evento {$evento->eveid} reconciliado, "
             . "paquete {$envio['codigoRecepcion']} enviado con {$armado['cantidad']} factura(s).");
+
+        return true;
     }
 
     /**

@@ -220,7 +220,9 @@ class EmisionService
                 $eventoPendiente = EventosSignificativo::pendienteDeEnvio($emisor->emiid, $puntoVenta->pvsuc, $puntoVenta->pvpdv)->first();
                 if ($eventoPendiente) {
                     try {
-                        $contingencia->reconciliar($eventoPendiente, $emisor);
+                        if (!$contingencia->reconciliar($eventoPendiente, $emisor)) {
+                            Log::warning("Reconciliación automática del evento {$eventoPendiente->eveid} no se completó — ver log anterior para el motivo.");
+                        }
                     } catch (Throwable $e) {
                         Log::error("Reconciliación del evento {$eventoPendiente->eveid} falló: " . $e->getMessage());
                     }

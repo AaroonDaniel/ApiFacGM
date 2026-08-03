@@ -61,8 +61,12 @@ class ProcesarContingenciasPendientes extends Command
 
             $this->info("Emisor {$emisor->eminit}: reconciliando evento {$evento->eveid}...");
             try {
-                $contingencia->reconciliar($evento, $emisor);
-                $this->info("  OK.");
+                $ok = $contingencia->reconciliar($evento, $emisor);
+                if ($ok) {
+                    $this->info("  OK.");
+                } else {
+                    $this->error("  No se completó — revisar storage/logs/laravel.log para el motivo exacto.");
+                }
             } catch (Throwable $e) {
                 $this->error("  Falló: " . $e->getMessage());
             }
