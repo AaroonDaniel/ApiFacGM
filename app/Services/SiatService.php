@@ -465,7 +465,7 @@ class SiatService
     public function enviarPaqueteOffline(
         string $cuis,
         string $cufd,
-        string $archivoBase64,
+        string $archivoBinario,
         string $issueDate,
         string $hashArchivo,
         int $cantidadFacturas,
@@ -480,7 +480,7 @@ class SiatService
                 'tipoFacturaDocumento'  => 1,
                 'cuis'                  => $cuis,
                 'cufd'                  => $cufd,
-                'archivo'               => $archivoBase64,
+                'archivo'               => $archivoBinario,
                 'fechaEnvio'            => $issueDate,
                 'hashArchivo'           => $hashArchivo,
                 'cantidadFacturas'      => $cantidadFacturas,

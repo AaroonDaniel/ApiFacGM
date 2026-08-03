@@ -154,8 +154,9 @@ class EmisionService
                 ]);
 
                 // Si veníamos de una contingencia, esto prueba que la
-                // conexión volvió: reconciliar el evento pendiente.
-                $eventoPendiente = EventosSignificativo::activoDe($emisor->emiid)->first();
+                // conexión volvió: reconciliar el evento pendiente (incluye
+                // eventos ya cerrados cuyo envío del paquete falló antes).
+                $eventoPendiente = EventosSignificativo::pendienteDeEnvio($emisor->emiid)->first();
                 if ($eventoPendiente) {
                     try {
                         $contingencia->reconciliar($eventoPendiente, $emisor);

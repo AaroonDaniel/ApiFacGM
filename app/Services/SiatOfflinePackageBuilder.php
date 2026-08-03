@@ -14,7 +14,12 @@ class SiatOfflinePackageBuilder
 {
     /**
      * @param array<int, array{cuf: string, xml: string}> $facturas
-     * @return array{archivo: string, hash: string, cantidad: int} archivo en base64
+     * @return array{archivo: string, hash: string, cantidad: int}
+     *         'archivo' es binario CRUDO (sin base64) — SiatService/SoapClient
+     *         lo codifica solo, igual que con el XML de una factura individual.
+     *         'hash' se calcula sobre el .tar SIN comprimir, para igualar el
+     *         patrón de receiveInvoice() (que hashea el XML sin comprimir,
+     *         no el gzip que se envía).
      */
     public function construir(array $facturas): array
     {
@@ -26,7 +31,6 @@ class SiatOfflinePackageBuilder
         $tarName = "paquete_offline_{$stamp}.tar";
         $tmpDir  = storage_path("app/siat/tmp_{$stamp}");
         $tarPath = "{$tmpDir}/{$tarName}";
-        $gzPath  = "{$tarPath}.gz";
 
         if (!is_dir($tmpDir) && !mkdir($tmpDir, 0755, true) && !is_dir($tmpDir)) {
             throw new Exception("No se pudo crear el directorio temporal {$tmpDir}.");
@@ -40,26 +44,21 @@ class SiatOfflinePackageBuilder
                 }
                 $tar->addFromString("{$factura['cuf']}.xml", $factura['xml']);
             }
-
-            $tar->compress(\Phar::GZ);
             unset($tar);
-            @unlink($tarPath);
 
-            if (!file_exists($gzPath)) {
-                throw new Exception('No se generó el archivo .tar.gz del paquete.');
+            if (!file_exists($tarPath)) {
+                throw new Exception('No se generó el archivo .tar del paquete.');
             }
 
-            $binary = file_get_contents($gzPath);
+            $tarBinario = file_get_contents($tarPath);
+            $binary     = gzencode($tarBinario, 9);
 
             return [
-                'archivo'  => base64_encode($binary),
-                'hash'     => hash('sha256', $binary),
+                'archivo'  => $binary,
+                'hash'     => hash('sha256', $tarBinario),
                 'cantidad' => count($facturas),
             ];
         } finally {
-            if (file_exists($gzPath)) {
-                @unlink($gzPath);
-            }
             if (file_exists($tarPath)) {
                 @unlink($tarPath);
             }

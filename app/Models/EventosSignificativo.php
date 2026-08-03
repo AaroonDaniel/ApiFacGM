@@ -65,4 +65,18 @@ class EventosSignificativo extends Model
     {
         return $query->where('emiid', $emiid)->where('eveest', self::ESTADO_ACTIVO)->latest('eveini');
     }
+
+    /**
+     * Eventos de un emisor que todavía no terminaron de reconciliarse
+     * (registrados o no ante el SIAT, pero sin paquete enviado con éxito).
+     * A diferencia de scopeActivoDe(), incluye los ya cerrados localmente
+     * cuyo envío del paquete falló y quedó pendiente de reintento.
+     */
+    public function scopePendienteDeEnvio($query, int $emiid)
+    {
+        return $query->where('emiid', $emiid)
+            ->whereIn('eveest', [self::ESTADO_ACTIVO, self::ESTADO_CERRADO])
+            ->whereNull('evecodrecpaq')
+            ->latest('eveini');
+    }
 }

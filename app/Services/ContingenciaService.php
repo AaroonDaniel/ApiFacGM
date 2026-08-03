@@ -20,17 +20,13 @@ use Illuminate\Support\Facades\Storage;
  *  3. validar(): consulta el resultado de validación del paquete y
  *     actualiza el estado final de cada factura.
  *
- * ESTADO: code-complete, pendiente de prueba en vivo end-to-end.
- * Verificado en vivo contra el SIAT piloto (2026-08-03): detección de caída
- * real, creación del evento 'activo', y acoplamiento de varias facturas
- * offline al mismo evento (acoplar()).
- * NO verificado en vivo todavía: reconciliar() completo (registrarEventoSignificativo
- * + empaquetado + envío) y validar(). Quedó bloqueado por un rechazo del
- * SIAT piloto ("API KEY NO VALIDO") al pedir CUIS/CUFD nuevos — no relacionado
- * con este código (verificarComunicacion() y el uso de códigos ya emitidos
- * seguían funcionando bien en ese momento). Las facturas #9, #10, #11 y #13
- * del entorno de pruebas quedaron reales y correctamente acopladas al evento
- * #1, esperando esa reconciliación.
+ * ESTADO: verificado en vivo end-to-end contra el SIAT piloto (2026-08-03).
+ * Ciclo completo probado con datos reales: caída detectada → 3 facturas
+ * offline acopladas al mismo evento → reconexión → reconciliar() registra
+ * el evento retroactivo, arma y envía el paquete → validar() confirma
+ * 'accepted' → las 4 facturas quedan 'aceptada'. reconciliar() es
+ * reanudable: si el envío del paquete falla tras registrar el evento
+ * (evecodrec ya seteado), un reintento no vuelve a registrar el evento.
  */
 class ContingenciaService
 {
@@ -91,30 +87,37 @@ class ContingenciaService
             return;
         }
 
-        $inicio = $evento->eveini;
-        $fin    = $facturas->max('fachora') ?? now();
+        // Reanudable: si ya se registró el evento ante el SIAT en un intento
+        // previo (p. ej. el envío del paquete falló después), no se vuelve
+        // a registrar — solo se reintenta el empaquetado y envío.
+        if ($evento->evecodrec) {
+            Log::info("Contingencia emisor {$emisor->eminit}: evento {$evento->eveid} ya registrado (codigoRecepcion={$evento->evecodrec}), reintentando solo el envío del paquete.");
+        } else {
+            $inicio = $evento->eveini;
+            $fin    = $facturas->max('fachora') ?? now();
 
-        $registro = $siat->registrarEventoSignificativo(
-            $cuis,
-            $cufdActual->scovalor,
-            $evento->evecod,
-            $evento->evedesc,
-            $inicio,
-            $fin,
-            $evento->evecufd
-        );
+            $registro = $siat->registrarEventoSignificativo(
+                $cuis,
+                $cufdActual->scovalor,
+                $evento->evecod,
+                $evento->evedesc,
+                $inicio,
+                $fin,
+                $evento->evecufd
+            );
 
-        if (!($registro['success'] ?? false)) {
-            Log::error("Contingencia emisor {$emisor->eminit}: no se pudo registrar el evento {$evento->eveid} ante el SIAT. "
-                . ($registro['mensaje'] ?? ''));
-            return;
+            if (!($registro['success'] ?? false)) {
+                Log::error("Contingencia emisor {$emisor->eminit}: no se pudo registrar el evento {$evento->eveid} ante el SIAT. "
+                    . ($registro['mensaje'] ?? ''));
+                return;
+            }
+
+            $evento->update([
+                'eveest'    => EventosSignificativo::ESTADO_CERRADO,
+                'evefin'    => $fin,
+                'evecodrec' => $registro['codigoRecepcion'],
+            ]);
         }
-
-        $evento->update([
-            'eveest'    => EventosSignificativo::ESTADO_CERRADO,
-            'evefin'    => $fin,
-            'evecodrec' => $registro['codigoRecepcion'],
-        ]);
 
         // --- Empaquetar y enviar ---
         $paquete = [];
@@ -142,7 +145,7 @@ class ContingenciaService
             now()->format('Y-m-d\TH:i:s.v'),
             $armado['hash'],
             $armado['cantidad'],
-            (string) $registro['codigoRecepcion']
+            (string) $evento->evecodrec
         );
 
         if (($envio['status'] ?? null) !== 'received') {
