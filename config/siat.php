@@ -14,7 +14,7 @@ return [
     |
     */
     'ambiente_urls' => [
-        Emisor::AMBIENTE_PRODUCCION => env('SIAT_URL_PRODUCCION', 'https://siatservicios.impuestos.gob.bo/v2/'),
+        Emisor::AMBIENTE_PRODUCCION => env('SIAT_URL_PRODUCCION', 'https://siatrest.impuestos.gob.bo/v2/'),
         Emisor::AMBIENTE_PILOTO     => env('SIAT_URL_PILOTO', 'https://pilotosiatservicios.impuestos.gob.bo/v2/'),
     ],
 
