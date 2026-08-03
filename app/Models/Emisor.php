@@ -35,7 +35,7 @@ class Emisor extends Model
 
     protected $casts = [
         'emitoken' => 'encrypted',
-        'emisis' => 'integer',
+        'emisis' => 'string',
         'emisuc' => 'integer',
         'emipdv' => 'integer',
         'emimod' => 'integer',

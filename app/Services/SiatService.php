@@ -16,7 +16,7 @@ class SiatService
     protected Emisor $emisor;
 
     protected string $token;
-    protected int $systemCode;
+    protected string $systemCode;
     protected string $nit;
     protected int $branchCode;
     protected int $posCode;
