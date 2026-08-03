@@ -11,8 +11,8 @@ class Factura extends Model
     protected $table = 'facturas';
     protected $primaryKey = 'facid';
 
-    protected const ESTADO_VIGENTE = 'vigente';
-    protected const ESTADO_ANULADA = 'anulada';
+    public const ESTADO_VIGENTE = 'vigente';
+    public const ESTADO_ANULADA = 'anulada';
 
     public const SIAT_PENDIENTE = 'pendiente';
     public const SIAT_ACEPTADA = 'aceptada';
