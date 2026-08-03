@@ -8,6 +8,7 @@ use App\Models\Factura;
 use App\Models\Secuencia;
 use App\Models\SiatCodigo;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -31,48 +32,85 @@ class EmisionService
      */
     public function emitir(Emisor $emisor, array $datos): Factura
     {
-        // -------- FASE 1: persistir --------
-        $factura = DB::transaction(function () use ($emisor, $datos) {
-            $numero = $this->siguienteNumero($emisor);
+        // Idempotencia: si un sistema cliente reintenta la misma petición
+        // (ej. por timeout de red) con la misma referencia_externa, se
+        // devuelve la factura ya existente en vez de crear otra. Chequeo
+        // "optimista" aquí (evita gastar un número de secuencia en el caso
+        // común); la restricción única de la BD cubre la carrera real si
+        // dos peticiones idénticas llegan casi al mismo tiempo (más abajo).
+        $refExt = $datos['referencia_externa'] ?? null;
+        if ($refExt) {
+            $existente = Factura::where('emiid', $emisor->emiid)
+                ->where('facsisorig', $datos['sistema_origen'])
+                ->where('facrefext', $refExt)
+                ->first();
 
-            $totales = $this->calcularTotales($datos['detalle'], $datos['descuento_adicional'] ?? 0);
-
-            $factura = Factura::create([
-                'emiid'        => $emisor->emiid,
-                'facnro'       => $numero,
-                'facfch'       => now()->format('Y-m-d'),
-                'fachora'      => now(),
-                'facnomrazon'  => strtoupper($datos['cliente']['nombre_razon_social']),
-                'facnumdoc'    => $datos['cliente']['numero_documento'],
-                'factipodoc'   => $datos['cliente']['tipo_documento'],
-                'faccompl'     => $datos['cliente']['complemento'] ?? null,
-                'facmetpag'    => $datos['metodo_pago'],
-                'facmonto'     => $totales['total'],
-                'facmontoiva'  => $totales['sujeto_iva'],
-                'facdesc'      => $datos['descuento_adicional'] ?? 0,
-                'facest'       => Factura::ESTADO_VIGENTE,
-                'facsiatest'   => Factura::SIAT_PENDIENTE,
-                'facsisorig'   => $datos['sistema_origen'],
-                'facrefext'    => $datos['referencia_externa'] ?? null,
-            ]);
-
-            foreach ($datos['detalle'] as $linea) {
-                $subtotal = ($linea['cantidad'] * $linea['precio_unitario']) - ($linea['descuento'] ?? 0);
-                $factura->detalles()->create([
-                    'facdetacteco'  => $linea['actividad_economica'],
-                    'facdetprodsin' => $linea['codigo_producto_sin'],
-                    'facdetcodprod' => $linea['codigo_producto'],
-                    'facdetdesc'    => $linea['descripcion'],
-                    'facdetcnt'     => $linea['cantidad'],
-                    'facdetunimed'  => $linea['unidad_medida'],
-                    'facdetprc'     => $linea['precio_unitario'],
-                    'facdetdscto'   => $linea['descuento'] ?? null,
-                    'facdetsub'     => $subtotal,
-                ]);
+            if ($existente) {
+                Log::info("Factura duplicada evitada: emiid={$emisor->emiid} sistema={$datos['sistema_origen']} ref={$refExt} -> factura #{$existente->facnro}.");
+                return $existente;
             }
+        }
 
-            return $factura;
-        });
+        // -------- FASE 1: persistir --------
+        try {
+            $factura = DB::transaction(function () use ($emisor, $datos) {
+                $numero = $this->siguienteNumero($emisor);
+
+                $totales = $this->calcularTotales($datos['detalle'], $datos['descuento_adicional'] ?? 0);
+
+                $factura = Factura::create([
+                    'emiid'        => $emisor->emiid,
+                    'facnro'       => $numero,
+                    'facfch'       => now()->format('Y-m-d'),
+                    'fachora'      => now(),
+                    'facnomrazon'  => strtoupper($datos['cliente']['nombre_razon_social']),
+                    'facnumdoc'    => $datos['cliente']['numero_documento'],
+                    'factipodoc'   => $datos['cliente']['tipo_documento'],
+                    'faccompl'     => $datos['cliente']['complemento'] ?? null,
+                    'facmetpag'    => $datos['metodo_pago'],
+                    'facmonto'     => $totales['total'],
+                    'facmontoiva'  => $totales['sujeto_iva'],
+                    'facdesc'      => $datos['descuento_adicional'] ?? 0,
+                    'facest'       => Factura::ESTADO_VIGENTE,
+                    'facsiatest'   => Factura::SIAT_PENDIENTE,
+                    'facsisorig'   => $datos['sistema_origen'],
+                    'facrefext'    => $datos['referencia_externa'] ?? null,
+                ]);
+
+                foreach ($datos['detalle'] as $linea) {
+                    $subtotal = ($linea['cantidad'] * $linea['precio_unitario']) - ($linea['descuento'] ?? 0);
+                    $factura->detalles()->create([
+                        'facdetacteco'  => $linea['actividad_economica'],
+                        'facdetprodsin' => $linea['codigo_producto_sin'],
+                        'facdetcodprod' => $linea['codigo_producto'],
+                        'facdetdesc'    => $linea['descripcion'],
+                        'facdetcnt'     => $linea['cantidad'],
+                        'facdetunimed'  => $linea['unidad_medida'],
+                        'facdetprc'     => $linea['precio_unitario'],
+                        'facdetdscto'   => $linea['descuento'] ?? null,
+                        'facdetsub'     => $subtotal,
+                    ]);
+                }
+
+                return $factura;
+            });
+        } catch (QueryException $e) {
+            // Violó facturas_dedup_unico: dos peticiones idénticas llegaron
+            // casi al mismo tiempo y la otra ganó la carrera. Devolvemos la
+            // suya en vez de la nuestra (que nunca llegó a persistirse).
+            if ($refExt && str_contains($e->getMessage(), 'facturas_dedup_unico')) {
+                $existente = Factura::where('emiid', $emisor->emiid)
+                    ->where('facsisorig', $datos['sistema_origen'])
+                    ->where('facrefext', $refExt)
+                    ->first();
+
+                if ($existente) {
+                    Log::warning("Condición de carrera evitada en emisión duplicada: emiid={$emisor->emiid} ref={$refExt} -> factura #{$existente->facnro}.");
+                    return $existente;
+                }
+            }
+            throw $e;
+        }
 
         // -------- FASE 2: enviar al SIAT (fuera de la transacción) --------
         $this->enviarAlSiat($emisor, $factura);
@@ -82,8 +120,23 @@ class EmisionService
 
     /**
      * FASE 2: construye XML + CUF y lo envía. Actualiza el estado según la respuesta.
+     *
+     * Nunca deja propagar una excepción: la factura de FASE 1 ya está
+     * persistida (con su número de secuencia ya consumido), así que si algo
+     * inesperado revienta acá, se marca 'error' en vez de dejarla en
+     * 'pendiente' para siempre sin que el cliente se entere de su ID.
      */
     private function enviarAlSiat(Emisor $emisor, Factura $factura): void
+    {
+        try {
+            $this->procesarEnvio($emisor, $factura);
+        } catch (Throwable $e) {
+            $factura->update(['facsiatest' => Factura::SIAT_ERROR]);
+            Log::error("Factura #{$factura->facnro}: error inesperado en FASE 2, marcada como error. " . $e->getMessage());
+        }
+    }
+
+    private function procesarEnvio(Emisor $emisor, Factura $factura): void
     {
         $siat = new SiatService($emisor);
         $contingencia = new ContingenciaService();
