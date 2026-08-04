@@ -36,6 +36,7 @@ class Factura extends Model
         'facnumdoc',
         'factipodoc',
         'faccompl',
+        'facemail',
         'facmetpag',
         'facnrotarj',
         'facmonto',
@@ -84,5 +85,37 @@ class Factura extends Model
     public function scopeHuerfano($query)
     {
         return $query->where('facsiatest', self::SIAT_OFFLINE)->whereNull('faceveid');
+    }
+
+    /**
+     * URL del validador público del SIN para el QR de la representación
+     * gráfica. Dominio distinto al de los servicios SOAP (config
+     * 'siat.ambiente_urls') — ver config('siat.qr_urls').
+     */
+    public function qrUrl(): string
+    {
+        $urls = config('siat.qr_urls');
+        $base = $urls[$this->emisor->emiamb] ?? $urls[Emisor::AMBIENTE_PILOTO];
+
+        return $base . '?' . http_build_query([
+            'nit'    => $this->emisor->eminit,
+            'cuf'    => $this->faccuf,
+            'numero' => $this->facnro,
+            't'      => 1, // rollo/térmica por defecto
+        ]);
+    }
+
+    /**
+     * Leyendas obligatorias de la representación gráfica.
+     */
+    public function leyendas(): array
+    {
+        return [
+            config('siat.leyenda_defecto'),
+            'Esta factura contribuye al desarrollo del país. El uso ilícito de este documento será pasible a sanción de acuerdo a Ley.',
+            $this->facsiatest === self::SIAT_OFFLINE
+                ? 'FACTURA EMITIDA EN CONTINGENCIA'
+                : 'FACTURA EMITIDA EN LÍNEA',
+        ];
     }
 }

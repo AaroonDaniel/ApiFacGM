@@ -212,9 +212,14 @@ class ContingenciaService
             ->whereNull('faccafc')
             ->get();
 
+        $notificacion = new NotificacionFacturaService();
+
         switch ($resultado['status']) {
             case 'accepted':
-                $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_ACEPTADA]));
+                $facturas->each(function (Factura $f) use ($notificacion) {
+                    $f->update(['facsiatest' => Factura::SIAT_ACEPTADA]);
+                    $notificacion->notificarSiCorresponde($f);
+                });
                 break;
             case 'rejected':
                 $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_RECHAZADA]));
@@ -330,9 +335,14 @@ class ContingenciaService
             ->whereNotNull('faccafc')
             ->get();
 
+        $notificacion = new NotificacionFacturaService();
+
         switch ($resultado['status']) {
             case 'accepted':
-                $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_ACEPTADA]));
+                $facturas->each(function (Factura $f) use ($notificacion) {
+                    $f->update(['facsiatest' => Factura::SIAT_ACEPTADA]);
+                    $notificacion->notificarSiCorresponde($f);
+                });
                 break;
             case 'rejected':
                 $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_RECHAZADA]));

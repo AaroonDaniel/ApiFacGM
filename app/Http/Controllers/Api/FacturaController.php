@@ -39,6 +39,7 @@ class FacturaController extends Controller
             'cliente.tipo_documento'          => 'required|integer',
             'cliente.numero_documento'        => 'required|string|max:30',
             'cliente.complemento'             => 'nullable|string|max:5',
+            'cliente.email'                   => 'nullable|email|max:255',
             'detalle'                         => 'required|array|min:1',
             'detalle.*.actividad_economica'   => 'required|string',
             'detalle.*.codigo_producto_sin'   => 'required|string',
@@ -65,6 +66,7 @@ class FacturaController extends Controller
                 'metodo_pago'         => $datos['metodo_pago'],
                 'descuento_adicional' => $datos['descuento_adicional'] ?? 0,
                 'referencia_externa'  => $datos['referencia_externa'] ?? null,
+                'email'               => $datos['cliente']['email'] ?? null,
                 'sistema_origen'      => $request->attributes->get('sistemaCliente')->siscod,
             ]);
         } catch (Throwable $e) {
@@ -111,6 +113,7 @@ class FacturaController extends Controller
             'cliente.tipo_documento'          => 'required|integer',
             'cliente.numero_documento'        => 'required|string|max:30',
             'cliente.complemento'             => 'nullable|string|max:5',
+            'cliente.email'                   => 'nullable|email|max:255',
             'detalle'                         => 'required|array|min:1',
             'detalle.*.actividad_economica'   => 'required|string',
             'detalle.*.codigo_producto_sin'   => 'required|string',
@@ -135,6 +138,7 @@ class FacturaController extends Controller
                 'metodo_pago'         => $datos['metodo_pago'],
                 'descuento_adicional' => $datos['descuento_adicional'] ?? 0,
                 'referencia_externa'  => $datos['referencia_externa'] ?? null,
+                'email'               => $datos['cliente']['email'] ?? null,
                 'sistema_origen'      => $request->attributes->get('sistemaCliente')->siscod,
                 'numero_factura'      => $datos['numero_factura'],
                 'codigo_cafc'         => $datos['codigo_cafc'],
@@ -287,6 +291,8 @@ class FacturaController extends Controller
      * Datos que el sistema cliente necesita para renderizar la factura
      * (QR + leyendas) sin tener que calcular nada por su cuenta. Sin CUF
      * (rechazada, pendiente, error) todavía no hay nada que representar.
+     * Lógica en Factura::qrUrl()/leyendas() — compartida con el correo
+     * automático al comprador (ver App\Mail\FacturaAceptadaMail).
      */
     private function representacionGrafica(Factura $factura): ?array
     {
@@ -295,28 +301,8 @@ class FacturaController extends Controller
         }
 
         return [
-            'qr_url'   => $this->qrUrl($factura),
-            'leyendas' => [
-                config('siat.leyenda_defecto'),
-                'Esta factura contribuye al desarrollo del país. El uso ilícito de este documento será pasible a sanción de acuerdo a Ley.',
-                $factura->facsiatest === Factura::SIAT_OFFLINE
-                    ? 'FACTURA EMITIDA EN CONTINGENCIA'
-                    : 'FACTURA EMITIDA EN LÍNEA',
-            ],
+            'qr_url'   => $factura->qrUrl(),
+            'leyendas' => $factura->leyendas(),
         ];
-    }
-
-    private function qrUrl(Factura $factura): string
-    {
-        $emisor = $factura->emisor;
-        $urls   = config('siat.qr_urls');
-        $base   = $urls[$emisor->emiamb] ?? $urls[Emisor::AMBIENTE_PILOTO];
-
-        return $base . '?' . http_build_query([
-            'nit'    => $emisor->eminit,
-            'cuf'    => $factura->faccuf,
-            'numero' => $factura->facnro,
-            't'      => 1, // rollo/térmica; el sistema cliente puede pedir t=2 (carta) si imprime distinto
-        ]);
     }
 }

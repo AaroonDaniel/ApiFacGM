@@ -72,6 +72,7 @@ class EmisionService
                     'facnumdoc'    => $datos['cliente']['numero_documento'],
                     'factipodoc'   => $datos['cliente']['tipo_documento'],
                     'faccompl'     => $datos['cliente']['complemento'] ?? null,
+                    'facemail'     => $datos['email'] ?? null,
                     'facmetpag'    => $datos['metodo_pago'],
                     'facmonto'     => $totales['total'],
                     'facmontoiva'  => $totales['sujeto_iva'],
@@ -232,6 +233,7 @@ class EmisionService
                     'faccodrec'  => $resp['codigoRecepcion'] ?? null,
                     'facxmlpath' => $path,
                 ]);
+                (new NotificacionFacturaService())->notificarSiCorresponde($factura);
 
                 // Si veníamos de una contingencia, esto prueba que la
                 // conexión volvió: reconciliar el evento pendiente (incluye
@@ -321,6 +323,7 @@ class EmisionService
                     'facnumdoc'    => $datos['cliente']['numero_documento'],
                     'factipodoc'   => $datos['cliente']['tipo_documento'],
                     'faccompl'     => $datos['cliente']['complemento'] ?? null,
+                    'facemail'     => $datos['email'] ?? null,
                     'facmetpag'    => $datos['metodo_pago'],
                     'facmonto'     => $totales['total'],
                     'facmontoiva'  => $totales['sujeto_iva'],
