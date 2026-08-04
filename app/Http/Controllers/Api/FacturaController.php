@@ -61,6 +61,19 @@ class FacturaController extends Controller
             ], 422);
         }
 
+        // 2a. Exclusividad opcional: si el emisor tiene un sistema dueño
+        // asignado (emisores.sisid), solo ESE sistema puede facturar con
+        // él. Si sisid está vacío, el emisor queda libre para cualquier
+        // sistema autenticado (útil para pruebas) — es responsabilidad de
+        // quien administra los emisores decidir cuándo cerrarlo.
+        $sistemaCliente = $request->attributes->get('sistemaCliente');
+        if ($emisor->sisid !== null && $emisor->sisid !== $sistemaCliente->sisid) {
+            return response()->json([
+                'exito' => false,
+                'error' => 'Tu sistema no tiene autorización para facturar con este emisor.',
+            ], 403);
+        }
+
         // 2b. Resolver el punto de venta: el indicado en la petición, o el
         // (0,0) por defecto del emisor si no se especifica ninguno.
         $sucursal = $datos['punto_venta']['sucursal'] ?? $emisor->emisuc;
@@ -87,7 +100,7 @@ class FacturaController extends Controller
                 'metodo_pago'         => $datos['metodo_pago'],
                 'descuento_adicional' => $datos['descuento_adicional'] ?? 0,
                 'referencia_externa'  => $datos['referencia_externa'] ?? null,
-                'sistema_origen'      => $request->attributes->get('sistemaCliente')->siscod,
+                'sistema_origen'      => $sistemaCliente->siscod,
             ]);
         } catch (Throwable $e) {
             return response()->json([

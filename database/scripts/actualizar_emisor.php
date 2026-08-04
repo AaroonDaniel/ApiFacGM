@@ -18,6 +18,12 @@ $datos = [
     'emitoken'  => 'TU-TOKEN-AQUI',      // Token real de la API del SIAT
     'emimod'    => 2,                    // 1 = electrónica, 2 = computarizada
     'emiamb'    => 2,                    // 1 = producción, 2 = piloto
+
+    // Dueño exclusivo (opcional). null = libre, cualquier sistema
+    // autenticado puede facturar con este emisor (útil para pruebas).
+    // Si le pones el sisid de un sistema (ver `sistemas_cliente`), la API
+    // rechaza con 403 a cualquier OTRO sistema que intente usarlo.
+    'sisid'     => null,
 ];
 
 $emisor = App\Models\Emisor::updateOrCreate(
