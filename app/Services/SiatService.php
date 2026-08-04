@@ -678,6 +678,97 @@ class SiatService
         }
     }
 
+    // ==========================================
+    // SINCRONIZACIÓN DE CATÁLOGOS PARAMÉTRICOS
+    // ==========================================
+
+    /**
+     * Llama una operación de sincronización genérica y normaliza su
+     * resultado. Todas comparten el mismo request (SolicitudSincronizacion)
+     * y el mismo patrón de respuesta (nodo con .transaccion + una lista),
+     * verificado contra el WSDL real de FacturacionSincronizacion — solo
+     * cambia el nombre del nodo de respuesta y el de su campo de lista.
+     */
+    private function sincronizar(string $operacion, string $nodoRespuesta, string $campoLista): array
+    {
+        $cuis = $this->getActiveCuis();
+        if (!$cuis) {
+            return ['success' => false, 'mensaje' => 'Sin CUIS para sincronizar.'];
+        }
+
+        $params = ['SolicitudSincronizacion' => array_merge($this->getBaseParameters(false), ['cuis' => $cuis])];
+
+        try {
+            $client   = $this->getSoapClient('FacturacionSincronizacion');
+            $response = $client->$operacion($params);
+            $r = $response->$nodoRespuesta ?? null;
+
+            if (!$r || empty($r->transaccion)) {
+                $this->registrarTransaccion($operacion, $params, $response, SiatTransaccion::ESTADO_RECHAZO);
+                return ['success' => false, 'mensaje' => $this->extractSiatMessage($r)];
+            }
+
+            $this->registrarTransaccion($operacion, $params, $response, SiatTransaccion::ESTADO_EXITO);
+
+            // El SoapClient colapsa un array de un solo elemento a un
+            // objeto suelto en vez de devolver una lista de 1.
+            $items = $r->$campoLista ?? [];
+            if (is_object($items)) {
+                $items = [$items];
+            }
+
+            return ['success' => true, 'items' => $items];
+        } catch (SoapFault $fault) {
+            Log::error("SIAT {$operacion}: " . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion($operacion, $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO);
+            return ['success' => false, 'offline' => $offline, 'mensaje' => $fault->getMessage()];
+        }
+    }
+
+    /** Actividades económicas asociadas al NIT del emisor (por emisor). */
+    public function sincronizarActividades(): array
+    {
+        return $this->sincronizar('sincronizarActividades', 'RespuestaListaActividades', 'listaActividades');
+    }
+
+    /** Productos/servicios homologados por el SIN para las actividades del emisor (por emisor). */
+    public function sincronizarProductosServicios(): array
+    {
+        return $this->sincronizar('sincronizarListaProductosServicios', 'RespuestaListaProductos', 'listaCodigos');
+    }
+
+    /** Catálogo de unidades de medida (global). */
+    public function sincronizarUnidadesMedida(): array
+    {
+        return $this->sincronizar('sincronizarParametricaUnidadMedida', 'RespuestaListaParametricas', 'listaCodigos');
+    }
+
+    /** Leyendas obligatorias por actividad económica, para alternar en la representación gráfica (global). */
+    public function sincronizarLeyendas(): array
+    {
+        return $this->sincronizar('sincronizarListaLeyendasFactura', 'RespuestaListaParametricasLeyendas', 'listaLeyendas');
+    }
+
+    /** Catálogo de tipos de documento de identidad (global). */
+    public function sincronizarTiposDocumentoIdentidad(): array
+    {
+        return $this->sincronizar('sincronizarParametricaTipoDocumentoIdentidad', 'RespuestaListaParametricas', 'listaCodigos');
+    }
+
+    /** Catálogo de métodos de pago (global). */
+    public function sincronizarMetodosPago(): array
+    {
+        return $this->sincronizar('sincronizarParametricaTipoMetodoPago', 'RespuestaListaParametricas', 'listaCodigos');
+    }
+
+    /** Catálogo de motivos de anulación (global). */
+    public function sincronizarMotivosAnulacion(): array
+    {
+        return $this->sincronizar('sincronizarParametricaMotivoAnulacion', 'RespuestaListaParametricas', 'listaCodigos');
+    }
+
     /**
      * Extrae un mensaje legible de la respuesta del SIAT.
      */

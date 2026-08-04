@@ -12,3 +12,8 @@ Artisan::command('inspire', function () {
 // llegue una factura nueva. Requiere `php artisan schedule:work` (o el cron
 // de producción) corriendo para que efectivamente se dispare.
 Schedule::command('siat:procesar-contingencias')->everyFiveMinutes()->withoutOverlapping();
+
+// Sincronización diaria de catálogos paramétricos (actividades, productos,
+// unidades de medida, leyendas, tipos de documento, métodos de pago,
+// motivos de anulación) contra el SIAT.
+Schedule::command('siat:sincronizar-catalogos')->daily()->withoutOverlapping();
