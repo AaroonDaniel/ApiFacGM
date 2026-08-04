@@ -28,6 +28,7 @@ class Factura extends Model
         'facnro',
         'faccuf',
         'faccufd',
+        'facxmlhash',
         'facfch',
         'fachora',
         'facnomrazon',

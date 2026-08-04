@@ -178,6 +178,8 @@ class FacturaController extends Controller
                 'id'               => $factura->facid,
                 'numero'           => $factura->facnro,
                 'cuf'              => $factura->faccuf,
+                'cufd'             => $factura->faccufd,
+                'hash_sha256'      => $factura->facxmlhash,
                 'estado'           => $factura->facest,
                 'siat_estado'      => $factura->facsiatest,
                 'codigo_recepcion' => $factura->faccodrec,
@@ -185,6 +187,44 @@ class FacturaController extends Controller
                 'motivo_anulacion' => $factura->facmotanul,
                 'fecha_anulacion'  => $factura->facfchanul?->format('Y-m-d\TH:i:s.v'),
             ],
+            'representacion_grafica' => $this->representacionGrafica($factura),
         ];
+    }
+
+    /**
+     * Datos que el sistema cliente necesita para renderizar la factura
+     * (QR + leyendas) sin tener que calcular nada por su cuenta. Sin CUF
+     * (rechazada, pendiente, error) todavía no hay nada que representar.
+     */
+    private function representacionGrafica(Factura $factura): ?array
+    {
+        if (!$factura->faccuf) {
+            return null;
+        }
+
+        return [
+            'qr_url'   => $this->qrUrl($factura),
+            'leyendas' => [
+                config('siat.leyenda_defecto'),
+                'Esta factura contribuye al desarrollo del país. El uso ilícito de este documento será pasible a sanción de acuerdo a Ley.',
+                $factura->facsiatest === Factura::SIAT_OFFLINE
+                    ? 'FACTURA EMITIDA EN CONTINGENCIA'
+                    : 'FACTURA EMITIDA EN LÍNEA',
+            ],
+        ];
+    }
+
+    private function qrUrl(Factura $factura): string
+    {
+        $emisor = $factura->emisor;
+        $urls   = config('siat.qr_urls');
+        $base   = $urls[$emisor->emiamb] ?? $urls[Emisor::AMBIENTE_PILOTO];
+
+        return $base . '?' . http_build_query([
+            'nit'    => $emisor->eminit,
+            'cuf'    => $factura->faccuf,
+            'numero' => $factura->facnro,
+            't'      => 1, // rollo/térmica; el sistema cliente puede pedir t=2 (carta) si imprime distinto
+        ]);
     }
 }

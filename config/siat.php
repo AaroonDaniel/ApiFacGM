@@ -20,6 +20,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | URLs del validador de QR por ambiente
+    |--------------------------------------------------------------------------
+    |
+    | Dominio distinto al de los servicios SOAP (ambiente_urls): este es el
+    | validador público que la app "SIAT en tus manos" y cualquier lector de
+    | cámara abren al escanear el QR de la representación gráfica.
+    |
+    */
+    'qr_urls' => [
+        Emisor::AMBIENTE_PRODUCCION => env('SIAT_QR_URL_PRODUCCION', 'https://siat.impuestos.gob.bo/consulta/QR'),
+        Emisor::AMBIENTE_PILOTO     => env('SIAT_QR_URL_PILOTO', 'https://pilotosiat.impuestos.gob.bo/consulta/QR'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Timeout de conexión (segundos)
     |--------------------------------------------------------------------------
     */

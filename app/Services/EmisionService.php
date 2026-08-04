@@ -195,7 +195,7 @@ class EmisionService
         $cuf     = $builder->generateCuf();
         $hash    = hash('sha256', $xml);
 
-        $factura->update(['faccuf' => $cuf, 'faccufd' => $cufd->scovalor]);
+        $factura->update(['faccuf' => $cuf, 'faccufd' => $cufd->scovalor, 'facxmlhash' => $hash]);
 
         // Obtener CUIS y enviar.
         $cuis = $siat->getActiveCuis();
@@ -255,10 +255,12 @@ class EmisionService
     ): void {
         $factura->load('detalles');
         $builder = new SiatXmlBuilder($factura, $emisor, $cufdValor, $controlCode);
+        $xml     = $builder->buildXml();
         $gzip    = $builder->getGzipArchive();
         $cuf     = $builder->generateCuf();
+        $hash    = hash('sha256', $xml);
 
-        $factura->update(['faccuf' => $cuf, 'faccufd' => $cufdValor]);
+        $factura->update(['faccuf' => $cuf, 'faccufd' => $cufdValor, 'facxmlhash' => $hash]);
 
         $path = $this->guardarXmlOffline($gzip, $factura);
         $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
