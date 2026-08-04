@@ -24,3 +24,7 @@ Schedule::command('siat:sincronizar-catalogos')->daily()->withoutOverlapping();
 // extra es mínimo y evita quedar sin margen si la renovación diaria cae
 // justo cerca del límite de las 24h.
 Schedule::command('siat:renovar-cufd')->hourly()->withoutOverlapping();
+
+// Alarma + renovación proactiva del CUIS (vigencia ~365 días, 30 días de
+// aviso). Diario alcanza — hay meses de margen, a diferencia del CUFD.
+Schedule::command('siat:renovar-cuis')->daily()->withoutOverlapping();

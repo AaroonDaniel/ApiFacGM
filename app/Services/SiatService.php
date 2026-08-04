@@ -364,6 +364,57 @@ class SiatService
     }
 
     /**
+     * Renueva el CUIS de forma proactiva si está por vencer dentro de
+     * $diasAviso días (o si ya no hay uno vigente). A diferencia de
+     * getActiveCuis() — que solo renueva cuando el actual YA venció — esto
+     * adelanta la renovación antes del corte real de ~365 días, para no
+     * depender de que la primera factura después del vencimiento pague el
+     * costo justo cuando ya es tarde.
+     *
+     * @return array{renovado: bool, vigente_hasta: ?string, error?: string}
+     */
+    public function renovarCuisSiProximoAExpirar(int $diasAviso = 30): array
+    {
+        $cuis = SiatCodigo::query()
+            ->where('emiid', $this->emisor->emiid)
+            ->where('scotipo', SiatCodigo::TIPO_CUIS)
+            ->where('scoamb', $this->environment)
+            ->where('scosuc', $this->branchCode)
+            ->where('scopdv', $this->posCode)
+            ->where('scoest', true)
+            ->latest('scoemi')
+            ->first();
+
+        $vigente = $cuis && $cuis->scoven->isFuture();
+
+        if ($vigente) {
+            $diasRestantes = (int) now()->diffInDays($cuis->scoven);
+            if ($diasRestantes > $diasAviso) {
+                return ['renovado' => false, 'vigente_hasta' => $cuis->scoven->toDateString()];
+            }
+            Log::warning("SIAT: CUIS del emisor {$this->emisor->eminit} (suc {$this->branchCode}, PDV {$this->posCode}) "
+                . "vence en {$diasRestantes} día(s) ({$cuis->scoven->toDateString()}); renovando proactivamente.");
+        } else {
+            Log::warning("SIAT: emisor {$this->emisor->eminit} (suc {$this->branchCode}, PDV {$this->posCode}) sin CUIS vigente; renovando.");
+        }
+
+        $response = $this->getCuis();
+        if (!($response['success'] ?? false)) {
+            $mensaje = "No se pudo renovar el CUIS del emisor {$this->emisor->eminit} (suc {$this->branchCode}, PDV {$this->posCode}).";
+            Log::critical($mensaje . ' ' . ($response['error'] ?? ''));
+            return ['renovado' => false, 'vigente_hasta' => $cuis?->scoven?->toDateString(), 'error' => $mensaje];
+        }
+
+        try {
+            $nuevo = $this->storeCredential(SiatCodigo::TIPO_CUIS, $response['codigo'], null, now(), now()->addMonths(11));
+            return ['renovado' => true, 'vigente_hasta' => $nuevo->scoven->toDateString()];
+        } catch (Exception $e) {
+            Log::error('SIAT: fallo al persistir la renovación proactiva del CUIS. ' . $e->getMessage());
+            return ['renovado' => false, 'vigente_hasta' => $cuis?->scoven?->toDateString(), 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
      * CUFD vigente del emisor (modelo SiatCodigo); si no hay, lo renueva.
      * Vigencia ~24h.
      */
