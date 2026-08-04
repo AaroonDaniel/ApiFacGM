@@ -11,13 +11,20 @@ class EventosSignificativo extends Model
     protected $table = 'eventos_significativos';
     protected $primaryKey = 'eveid';
 
-    public const COD_CORTE_INTERNET = 1;
-    public const COD_SIN_INACCESIBLE = 2;
-    public const COD_CORTE_ENERGIA = 3;
-    public const COD_FALLA_SOFTWARE = 4;
-    public const COD_CAMBIO_INFRA = 5;
-    public const COD_FALLA_COMMS = 6;
-    public const COD_FUERZA_MAYOR = 7;
+    /**
+     * Motivos de Evento Significativo — códigos verificados en vivo contra
+     * `sincronizarParametricaEventosSignificativos` (piloto, 2026-08-04).
+     * Antes del 3 en adelante estaban mal (ej. COD_CORTE_ENERGIA valía 3
+     * cuando el código real del SIN es 7) — no se habían detectado porque
+     * en el código solo se usa COD_SIN_INACCESIBLE, que sí coincidía.
+     */
+    public const COD_CORTE_INTERNET = 1;          // CORTE DEL SERVICIO DE INTERNET
+    public const COD_SIN_INACCESIBLE = 2;         // INACCESIBILIDAD AL SERVICIO WEB DE LA ADMINISTRACIÓN TRIBUTARIA
+    public const COD_ZONA_SIN_INTERNET = 3;       // INGRESO A ZONAS SIN INTERNET POR DESPLIEGUE DE PUNTO DE VENTA
+    public const COD_VENTA_SIN_INTERNET = 4;      // VENTA EN LUGARES SIN INTERNET
+    public const COD_FALLA_SOFTWARE = 5;          // VIRUS INFORMÁTICO O FALLA DE SOFTWARE
+    public const COD_CAMBIO_INFRA = 6;            // CAMBIO DE INFRAESTRUCTURA DE SISTEMA O FALLA DE HARDWARE
+    public const COD_CORTE_ENERGIA = 7;           // CORTE DE SUMINISTRO DE ENERGÍA ELÉCTRICA
 
     public const ESTADO_ACTIVO = 'activo';
     public const ESTADO_CERRADO = 'cerrado';

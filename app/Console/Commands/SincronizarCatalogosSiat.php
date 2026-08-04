@@ -6,14 +6,18 @@ use App\Models\Actividad;
 use App\Models\Emisor;
 use App\Models\Leyenda;
 use App\Models\MetodoPago;
+use App\Models\Moneda;
 use App\Models\MotivoAnulacion;
+use App\Models\MotivoEventoSignificativo;
 use App\Models\ProductoServicio;
 use App\Models\TipoDocumentoIdentidad;
+use App\Models\TipoDocumentoSector;
 use App\Models\UnidadMedida;
 use App\Services\SiatService;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Closure;
 
 /**
@@ -28,7 +32,7 @@ class SincronizarCatalogosSiat extends Command
 {
     protected $signature = 'siat:sincronizar-catalogos';
 
-    protected $description = 'Sincroniza actividades/productos por emisor y los catálogos globales (unidades de medida, leyendas, tipos de documento, métodos de pago, motivos de anulación) contra el SIAT.';
+    protected $description = 'Sincroniza actividades/productos por emisor, los catálogos globales (unidades de medida, leyendas, tipos de documento, métodos de pago, monedas, tipos de documento sector, motivos de anulación/evento) y la deriva de reloj contra el SIAT.';
 
     public function handle(): int
     {
@@ -46,7 +50,9 @@ class SincronizarCatalogosSiat extends Command
         // Catálogos globales: el SIAT los devuelve igual sin importar qué
         // NIT autentique la llamada, así que basta con pedirlos una vez
         // usando las credenciales del primer emisor activo.
-        $this->sincronizarGlobales(new SiatService($emisores->first()));
+        $siat = new SiatService($emisores->first());
+        $this->sincronizarGlobales($siat);
+        $this->verificarDerivaDeReloj($siat);
 
         return self::SUCCESS;
     }
@@ -118,6 +124,45 @@ class SincronizarCatalogosSiat extends Command
             'moacod'  => (int) $item->codigoClasificador,
             'moadesc' => $item->descripcion,
         ], 'motivos de anulación');
+
+        $this->reemplazarCatalogo($siat->sincronizarTiposMoneda(), Moneda::class, fn ($item) => [
+            'moncod'  => (int) $item->codigoClasificador,
+            'mondesc' => $item->descripcion,
+        ], 'tipos de moneda');
+
+        $this->reemplazarCatalogo($siat->sincronizarTiposDocumentoSector(), TipoDocumentoSector::class, fn ($item) => [
+            'tdscod'  => (int) $item->codigoClasificador,
+            'tdsdesc' => $item->descripcion,
+        ], 'tipos de documento sector');
+
+        $this->reemplazarCatalogo($siat->sincronizarMotivosEventoSignificativo(), MotivoEventoSignificativo::class, fn ($item) => [
+            'mevcod'  => (int) $item->codigoClasificador,
+            'mevdesc' => $item->descripcion,
+        ], 'motivos de evento significativo');
+    }
+
+    /**
+     * Deriva de reloj: si el servidor local se desalinea de la hora oficial
+     * del SIN, las facturas empiezan a rechazarse por fechaEmision fuera de
+     * tolerancia. Solo se loguea — no hay nada automático que "corregir" el
+     * reloj del sistema operativo desde acá.
+     */
+    private function verificarDerivaDeReloj(SiatService $siat): void
+    {
+        $resultado = $siat->sincronizarFechaHora();
+
+        if (!$resultado['success']) {
+            $this->error('Fallo al consultar la hora del SIN — ' . ($resultado['mensaje'] ?? ''));
+            return;
+        }
+
+        $deriva = $resultado['deriva_segundos'];
+        $this->info("Hora del SIN: {$resultado['fechaHora']} (deriva: {$deriva}s).");
+
+        if (abs($deriva) >= 60) {
+            Log::critical("Deriva de reloj de {$deriva}s contra la hora oficial del SIN ({$resultado['fechaHora']}) "
+                . '— riesgo de rechazo de facturas por fechaEmision fuera de tolerancia.');
+        }
     }
 
     /**

@@ -782,6 +782,65 @@ class SiatService
         return $this->sincronizar('sincronizarParametricaMotivoAnulacion', 'RespuestaListaParametricas', 'listaCodigos');
     }
 
+    /** Catálogo de tipos de moneda (global). */
+    public function sincronizarTiposMoneda(): array
+    {
+        return $this->sincronizar('sincronizarParametricaTipoMoneda', 'RespuestaListaParametricas', 'listaCodigos');
+    }
+
+    /** Catálogo de tipos de documento sector (global) — qué Sector/Documento tiene habilitado emitir el NIT. */
+    public function sincronizarTiposDocumentoSector(): array
+    {
+        return $this->sincronizar('sincronizarParametricaTipoDocumentoSector', 'RespuestaListaParametricas', 'listaCodigos');
+    }
+
+    /** Catálogo de motivos de Evento Significativo (global) — distinto de la tabla de eventos ya ocurridos. */
+    public function sincronizarMotivosEventoSignificativo(): array
+    {
+        return $this->sincronizar('sincronizarParametricaEventosSignificativos', 'RespuestaListaParametricas', 'listaCodigos');
+    }
+
+    /**
+     * Deriva de reloj: compara la hora oficial del SIN contra la hora local
+     * del servidor. No es un catálogo — es un chequeo de diagnóstico para
+     * detectar un desfase que provocaría rechazos de fechaEmision.
+     *
+     * @return array{success: bool, fechaHora?: string, deriva_segundos?: int, mensaje?: string}
+     */
+    public function sincronizarFechaHora(): array
+    {
+        $cuis = $this->getActiveCuis();
+        if (!$cuis) {
+            return ['success' => false, 'mensaje' => 'Sin CUIS para consultar la hora del SIN.'];
+        }
+
+        $params = ['SolicitudSincronizacion' => array_merge($this->getBaseParameters(false), ['cuis' => $cuis])];
+
+        try {
+            $client   = $this->getSoapClient('FacturacionSincronizacion');
+            $response = $client->sincronizarFechaHora($params);
+            $r = $response->RespuestaFechaHora ?? null;
+
+            if (!$r || empty($r->transaccion) || empty($r->fechaHora)) {
+                $this->registrarTransaccion('sincronizarFechaHora', $params, $response, SiatTransaccion::ESTADO_RECHAZO);
+                return ['success' => false, 'mensaje' => $this->extractSiatMessage($r)];
+            }
+
+            $this->registrarTransaccion('sincronizarFechaHora', $params, $response, SiatTransaccion::ESTADO_EXITO);
+
+            $horaSin   = Carbon::parse($r->fechaHora);
+            $derivaSeg = (int) round(Carbon::now()->diffInSeconds($horaSin, false));
+
+            return ['success' => true, 'fechaHora' => $r->fechaHora, 'deriva_segundos' => $derivaSeg];
+        } catch (SoapFault $fault) {
+            Log::error('SIAT sincronizarFechaHora: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('sincronizarFechaHora', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO);
+            return ['success' => false, 'offline' => $offline, 'mensaje' => $fault->getMessage()];
+        }
+    }
+
     /**
      * Extrae un mensaje legible de la respuesta del SIAT.
      */
