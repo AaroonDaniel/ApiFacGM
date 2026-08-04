@@ -260,6 +260,153 @@ class EmisionService
     }
 
     /**
+     * Registra una factura CAFC: transcripción de un talón físico
+     * preimpreso, usado cuando una contingencia superó las 72h de extensión
+     * offline del CUFD (ver EventosSignificativo::excedioLimiteOffline()).
+     *
+     * A diferencia de emitir(): el número de factura NO sale de la
+     * secuencia digital normal (Secuencia) — es el que ya venía impreso en
+     * el papel y hay que respetarlo tal cual (la restricción única
+     * emiid+facsuc+facpdv+facnro sigue protegiendo contra duplicados). Y
+     * requiere que ya exista un evento significativo para ese punto de
+     * venta: no tiene sentido transcribir un CAFC sin una contingencia real
+     * detrás.
+     *
+     * @param array $datos ['cliente'=>[...], 'detalle'=>[...], 'metodo_pago'=>int,
+     *                      'descuento_adicional'=>float, 'referencia_externa'=>?string,
+     *                      'sistema_origen'=>string, 'numero_factura'=>int,
+     *                      'codigo_cafc'=>string, 'fecha_emision'=>\Carbon\CarbonInterface]
+     */
+    public function emitirCafc(Emisor $emisor, PuntoVenta $puntoVenta, array $datos): Factura
+    {
+        $refExt = $datos['referencia_externa'] ?? null;
+        if ($refExt) {
+            $existente = Factura::where('emiid', $emisor->emiid)
+                ->where('facsisorig', $datos['sistema_origen'])
+                ->where('facrefext', $refExt)
+                ->first();
+
+            if ($existente) {
+                Log::info("Factura CAFC duplicada evitada: emiid={$emisor->emiid} sistema={$datos['sistema_origen']} ref={$refExt} -> factura #{$existente->facnro}.");
+                return $existente;
+            }
+        }
+
+        $evento = EventosSignificativo::where('emiid', $emisor->emiid)
+            ->where('evesuc', $puntoVenta->pvsuc)
+            ->where('evepdv', $puntoVenta->pvpdv)
+            ->whereIn('eveest', [EventosSignificativo::ESTADO_ACTIVO, EventosSignificativo::ESTADO_CERRADO])
+            ->latest('eveini')
+            ->first();
+
+        if (!$evento) {
+            throw new Exception("No hay ningún evento de contingencia registrado para sucursal {$puntoVenta->pvsuc}, "
+                . "PDV {$puntoVenta->pvpdv}; no se puede transcribir una factura CAFC sin una contingencia asociada.");
+        }
+
+        try {
+            $factura = DB::transaction(function () use ($emisor, $puntoVenta, $evento, $datos) {
+                $totales = $this->calcularTotales($datos['detalle'], $datos['descuento_adicional'] ?? 0);
+
+                $factura = Factura::create([
+                    'emiid'        => $emisor->emiid,
+                    'facsuc'       => $puntoVenta->pvsuc,
+                    'facpdv'       => $puntoVenta->pvpdv,
+                    'facnro'       => $datos['numero_factura'],
+                    'facfch'       => $datos['fecha_emision']->format('Y-m-d'),
+                    'fachora'      => $datos['fecha_emision'],
+                    'facnomrazon'  => strtoupper($datos['cliente']['nombre_razon_social']),
+                    'facnumdoc'    => $datos['cliente']['numero_documento'],
+                    'factipodoc'   => $datos['cliente']['tipo_documento'],
+                    'faccompl'     => $datos['cliente']['complemento'] ?? null,
+                    'facmetpag'    => $datos['metodo_pago'],
+                    'facmonto'     => $totales['total'],
+                    'facmontoiva'  => $totales['sujeto_iva'],
+                    'facdesc'      => $datos['descuento_adicional'] ?? 0,
+                    'facest'       => Factura::ESTADO_VIGENTE,
+                    'facsiatest'   => Factura::SIAT_PENDIENTE,
+                    'facsisorig'   => $datos['sistema_origen'],
+                    'facrefext'    => $datos['referencia_externa'] ?? null,
+                    'faceveid'     => $evento->eveid,
+                    'faccafc'      => $datos['codigo_cafc'],
+                ]);
+
+                foreach ($datos['detalle'] as $linea) {
+                    $subtotal = ($linea['cantidad'] * $linea['precio_unitario']) - ($linea['descuento'] ?? 0);
+                    $factura->detalles()->create([
+                        'facdetacteco'  => $linea['actividad_economica'],
+                        'facdetprodsin' => $linea['codigo_producto_sin'],
+                        'facdetcodprod' => $linea['codigo_producto'],
+                        'facdetdesc'    => $linea['descripcion'],
+                        'facdetcnt'     => $linea['cantidad'],
+                        'facdetunimed'  => $linea['unidad_medida'],
+                        'facdetprc'     => $linea['precio_unitario'],
+                        'facdetdscto'   => $linea['descuento'] ?? null,
+                        'facdetsub'     => $subtotal,
+                    ]);
+                }
+
+                return $factura;
+            });
+        } catch (QueryException $e) {
+            if ($refExt && str_contains($e->getMessage(), 'facturas_dedup_unico')) {
+                $existente = Factura::where('emiid', $emisor->emiid)
+                    ->where('facsisorig', $datos['sistema_origen'])
+                    ->where('facrefext', $refExt)
+                    ->first();
+
+                if ($existente) {
+                    Log::warning("Condición de carrera evitada en transcripción CAFC duplicada: emiid={$emisor->emiid} ref={$refExt} -> factura #{$existente->facnro}.");
+                    return $existente;
+                }
+            }
+            throw $e;
+        }
+
+        $this->construirXmlCafc($emisor, $puntoVenta, $factura);
+
+        return $factura->refresh();
+    }
+
+    /**
+     * Construye el XML/CUF de una factura CAFC con el CUFD vigente ACTUAL
+     * — la transcripción ocurre por definición ya con la conexión de
+     * vuelta — y la deja en 'offline', lista para empaquetarse aparte en
+     * el próximo paquete CAFC (ver ContingenciaService::enviarPaqueteCafc()).
+     */
+    private function construirXmlCafc(Emisor $emisor, PuntoVenta $puntoVenta, Factura $factura): void
+    {
+        try {
+            $siat = new SiatService($emisor, $puntoVenta->pvsuc, $puntoVenta->pvpdv);
+            $cufd = $siat->getActiveCufd();
+
+            if (!$cufd instanceof SiatCodigo) {
+                $factura->update(['facsiatest' => Factura::SIAT_ERROR]);
+                Log::error("Factura CAFC #{$factura->facnro}: sin CUFD vigente para transcribir (se requiere estar en línea).");
+                return;
+            }
+
+            $factura->load('detalles');
+            $builder = new SiatXmlBuilder(
+                $factura, $emisor, $cufd->scovalor, $cufd->scocodctrl,
+                SiatXmlBuilder::EMISION_OFFLINE, $factura->faccafc
+            );
+            $xml  = $builder->buildXml();
+            $gzip = $builder->getGzipArchive();
+            $cuf  = $builder->generateCuf();
+            $hash = hash('sha256', $xml);
+
+            $factura->update(['faccuf' => $cuf, 'faccufd' => $cufd->scovalor, 'facxmlhash' => $hash]);
+
+            $path = $this->guardarXmlOffline($gzip, $factura);
+            $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
+        } catch (Throwable $e) {
+            $factura->update(['facsiatest' => Factura::SIAT_ERROR]);
+            Log::error("Factura CAFC #{$factura->facnro}: error al construir el XML. " . $e->getMessage());
+        }
+    }
+
+    /**
      * Construye el XML/CUF con un CUFD dado (vigente o de contingencia) y
      * guarda la factura como offline, acoplándola al evento significativo.
      */

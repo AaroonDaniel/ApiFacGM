@@ -49,6 +49,7 @@ class EventosSignificativo extends Model
         'evecufdctrl',
         'evecodrec',
         'evecodrecpaq',
+        'evecodrecpaqcafc',
         'eveest',
         'eveusr',
         'evereg',

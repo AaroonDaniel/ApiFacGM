@@ -579,6 +579,12 @@ class SiatService
     /**
      * Envía el paquete (.tar.gz de varias facturas offline) referenciando
      * el código de recepción del Evento Significativo ya registrado.
+     *
+     * $cafc: código CAFC cuando el paquete son facturas manuales transcritas
+     * (talón preimpreso, ver ContingenciaService::enviarPaqueteCafc()); null
+     * para un paquete de offline normal. El campo existe en el WSDL real
+     * (SolicitudServicioRecepcionPaquete.cafc, opcional) — verificado
+     * bajando el esquema del piloto, no se adivinó.
      */
     public function enviarPaqueteOffline(
         string $cuis,
@@ -587,9 +593,10 @@ class SiatService
         string $issueDate,
         string $hashArchivo,
         int $cantidadFacturas,
-        string $codigoEvento
+        string $codigoEvento,
+        ?string $cafc = null
     ): array {
-        $params = ['SolicitudServicioRecepcionPaquete' => array_merge($this->getBaseParameters(), [
+        $body = array_merge($this->getBaseParameters(), [
             'codigoDocumentoSector' => 1,
             'codigoEmision'         => 2, // offline
             'tipoFacturaDocumento'  => 1,
@@ -600,7 +607,13 @@ class SiatService
             'hashArchivo'           => $hashArchivo,
             'cantidadFacturas'      => $cantidadFacturas,
             'codigoEvento'          => $codigoEvento,
-        ])];
+        ]);
+
+        if ($cafc !== null) {
+            $body['cafc'] = $cafc;
+        }
+
+        $params = ['SolicitudServicioRecepcionPaquete' => $body];
 
         try {
             $client   = $this->getSoapClient('ServicioFacturacionCompraVenta');

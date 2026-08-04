@@ -3,6 +3,7 @@
 namespace Tests\Concerns;
 
 use App\Models\Emisor;
+use App\Models\EventosSignificativo;
 use App\Models\Factura;
 use App\Models\MotivoAnulacion;
 use App\Models\PuntoVenta;
@@ -75,6 +76,21 @@ trait InteractsWithFacturacion
     protected function crearMotivoAnulacion(int $codigo = 1, string $descripcion = 'FACTURA MAL EMITIDA'): MotivoAnulacion
     {
         return MotivoAnulacion::create(['moacod' => $codigo, 'moadesc' => $descripcion]);
+    }
+
+    protected function crearEventoSignificativo(Emisor $emisor, array $overrides = []): EventosSignificativo
+    {
+        return EventosSignificativo::create(array_merge([
+            'emiid'       => $emisor->emiid,
+            'evesuc'      => 0,
+            'evepdv'      => 0,
+            'evecod'      => EventosSignificativo::COD_SIN_INACCESIBLE,
+            'evedesc'     => 'SIAT inaccesible (de prueba)',
+            'eveini'      => now()->subHours(80),
+            'evecufd'     => 'CUFD-DE-PRUEBA',
+            'evecufdctrl' => 'CONTROL-DE-PRUEBA',
+            'eveest'      => EventosSignificativo::ESTADO_ACTIVO,
+        ], $overrides));
     }
 
     /**

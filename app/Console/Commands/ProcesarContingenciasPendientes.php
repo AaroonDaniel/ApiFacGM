@@ -30,6 +30,8 @@ class ProcesarContingenciasPendientes extends Command
     {
         $this->reconciliarPendientes($contingencia);
         $this->validarPaquetesEnviados($contingencia);
+        $this->enviarPaquetesCafcPendientes($contingencia);
+        $this->validarPaquetesCafcEnviados($contingencia);
 
         return self::SUCCESS;
     }
@@ -91,7 +93,7 @@ class ProcesarContingenciasPendientes extends Command
     private function validarPaquetesEnviados(ContingenciaService $contingencia): void
     {
         $eventos = EventosSignificativo::whereNotNull('evecodrecpaq')
-            ->whereHas('facturas', fn ($q) => $q->where('facsiatest', Factura::SIAT_EMPAQUETADA))
+            ->whereHas('facturas', fn ($q) => $q->where('facsiatest', Factura::SIAT_EMPAQUETADA)->whereNull('faccafc'))
             ->get();
 
         foreach ($eventos as $evento) {
@@ -103,6 +105,61 @@ class ProcesarContingenciasPendientes extends Command
             $this->info("Emisor {$emisor->eminit}: validando paquete del evento {$evento->eveid}...");
             try {
                 $status = $contingencia->validar($evento, $emisor);
+                $this->info("  Estado: {$status}");
+            } catch (Throwable $e) {
+                $this->error("  Falló: " . $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * Facturas CAFC (transcritas de talón preimpreso) ya acopladas a un
+     * evento registrado, pero cuyo paquete CAFC todavía no se envió — se
+     * empaqueta y envía por separado del offline normal (ver
+     * ContingenciaService::enviarPaqueteCafc()).
+     */
+    private function enviarPaquetesCafcPendientes(ContingenciaService $contingencia): void
+    {
+        $eventos = EventosSignificativo::whereNotNull('evecodrec')
+            ->whereHas('facturas', fn ($q) => $q->where('facsiatest', Factura::SIAT_OFFLINE)->whereNotNull('faccafc'))
+            ->get();
+
+        foreach ($eventos as $evento) {
+            $emisor = $evento->emisor;
+            if (!$emisor) {
+                continue;
+            }
+
+            $this->info("Emisor {$emisor->eminit}: enviando paquete CAFC del evento {$evento->eveid}...");
+            try {
+                $ok = $contingencia->enviarPaqueteCafc($evento, $emisor);
+                $this->info($ok ? '  OK.' : '  No se completó — revisar storage/logs/laravel.log.');
+            } catch (Throwable $e) {
+                $this->error("  Falló: " . $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * Paquetes CAFC ya enviados (evecodrecpaqcafc presente) cuyas facturas
+     * siguen en 'empaquetada': se consulta si el SIAT ya terminó de
+     * validarlos.
+     */
+    private function validarPaquetesCafcEnviados(ContingenciaService $contingencia): void
+    {
+        $eventos = EventosSignificativo::whereNotNull('evecodrecpaqcafc')
+            ->whereHas('facturas', fn ($q) => $q->where('facsiatest', Factura::SIAT_EMPAQUETADA)->whereNotNull('faccafc'))
+            ->get();
+
+        foreach ($eventos as $evento) {
+            $emisor = $evento->emisor;
+            if (!$emisor) {
+                continue;
+            }
+
+            $this->info("Emisor {$emisor->eminit}: validando paquete CAFC del evento {$evento->eveid}...");
+            try {
+                $status = $contingencia->validarCafc($evento, $emisor);
                 $this->info("  Estado: {$status}");
             } catch (Throwable $e) {
                 $this->error("  Falló: " . $e->getMessage());

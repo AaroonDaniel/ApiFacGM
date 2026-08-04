@@ -8,6 +8,7 @@ use App\Models\Factura;
 use App\Models\PuntoVenta;
 use App\Services\AnulacionService;
 use App\Services\EmisionService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Throwable;
@@ -49,48 +50,12 @@ class FacturaController extends Controller
             'detalle.*.descuento'             => 'nullable|numeric|min:0',
         ]);
 
-        // 2. Resolver el emisor por su NIT.
-        $emisor = Emisor::where('eminit', $datos['emisor_nit'])
-            ->where('emiest', true)
-            ->first();
-
-        if (!$emisor) {
-            return response()->json([
-                'exito' => false,
-                'error' => "No existe un emisor activo con NIT {$datos['emisor_nit']}.",
-            ], 422);
+        // 2. Resolver emisor + punto de venta.
+        $resuelto = $this->resolverEmisorYPuntoVenta($request, $datos['emisor_nit'], $datos['punto_venta'] ?? null);
+        if ($resuelto instanceof JsonResponse) {
+            return $resuelto;
         }
-
-        // 2a. Exclusividad opcional: si el emisor tiene un sistema dueño
-        // asignado (emisores.sisid), solo ESE sistema puede facturar con
-        // él. Si sisid está vacío, el emisor queda libre para cualquier
-        // sistema autenticado (útil para pruebas) — es responsabilidad de
-        // quien administra los emisores decidir cuándo cerrarlo.
-        $sistemaCliente = $request->attributes->get('sistemaCliente');
-        if ($emisor->sisid !== null && $emisor->sisid !== $sistemaCliente->sisid) {
-            return response()->json([
-                'exito' => false,
-                'error' => 'Tu sistema no tiene autorización para facturar con este emisor.',
-            ], 403);
-        }
-
-        // 2b. Resolver el punto de venta: el indicado en la petición, o el
-        // (0,0) por defecto del emisor si no se especifica ninguno.
-        $sucursal = $datos['punto_venta']['sucursal'] ?? $emisor->emisuc;
-        $pdv      = $datos['punto_venta']['punto_venta'] ?? $emisor->emipdv;
-
-        $pv = PuntoVenta::where('emiid', $emisor->emiid)
-            ->where('pvsuc', $sucursal)
-            ->where('pvpdv', $pdv)
-            ->where('pvest', true)
-            ->first();
-
-        if (!$pv) {
-            return response()->json([
-                'exito' => false,
-                'error' => "No existe un punto de venta activo (sucursal {$sucursal}, PDV {$pdv}) para este emisor.",
-            ], 422);
-        }
+        [$emisor, $pv] = $resuelto;
 
         // 3. Delegar la emisión al servicio.
         try {
@@ -100,7 +65,7 @@ class FacturaController extends Controller
                 'metodo_pago'         => $datos['metodo_pago'],
                 'descuento_adicional' => $datos['descuento_adicional'] ?? 0,
                 'referencia_externa'  => $datos['referencia_externa'] ?? null,
-                'sistema_origen'      => $sistemaCliente->siscod,
+                'sistema_origen'      => $request->attributes->get('sistemaCliente')->siscod,
             ]);
         } catch (Throwable $e) {
             return response()->json([
@@ -118,6 +83,132 @@ class FacturaController extends Controller
         };
 
         return response()->json($this->payload($factura), $codigo);
+    }
+
+    /**
+     * POST /api/facturas/cafc — registrar una factura CAFC: transcripción
+     * de un talón físico preimpreso, usado cuando una contingencia superó
+     * las 72h de extensión offline del CUFD (ver
+     * EventosSignificativo::excedioLimiteOffline()). A diferencia de
+     * store(), numero_factura y codigo_cafc son obligatorios y explícitos
+     * — el número ya viene impreso en el papel, no sale de la secuencia
+     * digital normal del punto de venta.
+     */
+    public function cafc(Request $request): JsonResponse
+    {
+        $datos = $request->validate([
+            'emisor_nit'                      => 'required|string',
+            'punto_venta.sucursal'            => 'nullable|integer|min:0',
+            'punto_venta.punto_venta'         => 'nullable|integer|min:0',
+            'numero_factura'                  => 'required|integer|min:1',
+            'codigo_cafc'                      => 'required|string|max:50',
+            'fecha_emision'                   => 'required|date|before_or_equal:now',
+            'referencia_externa'              => 'nullable|string|max:100',
+            'metodo_pago'                     => 'required|integer',
+            'descuento_adicional'             => 'nullable|numeric|min:0',
+            'cliente'                         => 'required|array',
+            'cliente.nombre_razon_social'     => 'required|string|max:255',
+            'cliente.tipo_documento'          => 'required|integer',
+            'cliente.numero_documento'        => 'required|string|max:30',
+            'cliente.complemento'             => 'nullable|string|max:5',
+            'detalle'                         => 'required|array|min:1',
+            'detalle.*.actividad_economica'   => 'required|string',
+            'detalle.*.codigo_producto_sin'   => 'required|string',
+            'detalle.*.codigo_producto'       => 'required|string',
+            'detalle.*.descripcion'           => 'required|string|max:255',
+            'detalle.*.cantidad'              => 'required|numeric|min:0',
+            'detalle.*.unidad_medida'         => 'required|integer',
+            'detalle.*.precio_unitario'       => 'required|numeric|min:0',
+            'detalle.*.descuento'             => 'nullable|numeric|min:0',
+        ]);
+
+        $resuelto = $this->resolverEmisorYPuntoVenta($request, $datos['emisor_nit'], $datos['punto_venta'] ?? null);
+        if ($resuelto instanceof JsonResponse) {
+            return $resuelto;
+        }
+        [$emisor, $pv] = $resuelto;
+
+        try {
+            $factura = $this->emisionService->emitirCafc($emisor, $pv, [
+                'cliente'             => $datos['cliente'],
+                'detalle'             => $datos['detalle'],
+                'metodo_pago'         => $datos['metodo_pago'],
+                'descuento_adicional' => $datos['descuento_adicional'] ?? 0,
+                'referencia_externa'  => $datos['referencia_externa'] ?? null,
+                'sistema_origen'      => $request->attributes->get('sistemaCliente')->siscod,
+                'numero_factura'      => $datos['numero_factura'],
+                'codigo_cafc'         => $datos['codigo_cafc'],
+                'fecha_emision'       => Carbon::parse($datos['fecha_emision']),
+            ]);
+        } catch (Throwable $e) {
+            return response()->json([
+                'exito' => false,
+                'error' => 'Error al transcribir la factura CAFC: ' . $e->getMessage(),
+            ], 422);
+        }
+
+        $codigo = match ($factura->facsiatest) {
+            Factura::SIAT_OFFLINE   => 200,
+            Factura::SIAT_RECHAZADA => 422,
+            default                 => 200,
+        };
+
+        return response()->json($this->payload($factura), $codigo);
+    }
+
+    /**
+     * Resuelve emisor + punto de venta a partir de la petición, aplicando
+     * la exclusividad opcional emisor↔sistema cliente. Devuelve
+     * [Emisor, PuntoVenta], o una JsonResponse con el error (422/403) para
+     * que el caller la devuelva tal cual.
+     *
+     * @return array{0: Emisor, 1: PuntoVenta}|JsonResponse
+     */
+    private function resolverEmisorYPuntoVenta(Request $request, string $emisorNit, ?array $puntoVentaDatos): array|JsonResponse
+    {
+        $emisor = Emisor::where('eminit', $emisorNit)
+            ->where('emiest', true)
+            ->first();
+
+        if (!$emisor) {
+            return response()->json([
+                'exito' => false,
+                'error' => "No existe un emisor activo con NIT {$emisorNit}.",
+            ], 422);
+        }
+
+        // Exclusividad opcional: si el emisor tiene un sistema dueño
+        // asignado (emisores.sisid), solo ESE sistema puede facturar con
+        // él. Si sisid está vacío, el emisor queda libre para cualquier
+        // sistema autenticado (útil para pruebas) — es responsabilidad de
+        // quien administra los emisores decidir cuándo cerrarlo.
+        $sistemaCliente = $request->attributes->get('sistemaCliente');
+        if ($emisor->sisid !== null && $emisor->sisid !== $sistemaCliente->sisid) {
+            return response()->json([
+                'exito' => false,
+                'error' => 'Tu sistema no tiene autorización para facturar con este emisor.',
+            ], 403);
+        }
+
+        // Punto de venta: el indicado en la petición, o el (0,0) por
+        // defecto del emisor si no se especifica ninguno.
+        $sucursal = $puntoVentaDatos['sucursal'] ?? $emisor->emisuc;
+        $pdv      = $puntoVentaDatos['punto_venta'] ?? $emisor->emipdv;
+
+        $pv = PuntoVenta::where('emiid', $emisor->emiid)
+            ->where('pvsuc', $sucursal)
+            ->where('pvpdv', $pdv)
+            ->where('pvest', true)
+            ->first();
+
+        if (!$pv) {
+            return response()->json([
+                'exito' => false,
+                'error' => "No existe un punto de venta activo (sucursal {$sucursal}, PDV {$pdv}) para este emisor.",
+            ], 422);
+        }
+
+        return [$emisor, $pv];
     }
 
     /**
@@ -180,6 +271,7 @@ class FacturaController extends Controller
                 'cuf'              => $factura->faccuf,
                 'cufd'             => $factura->faccufd,
                 'hash_sha256'      => $factura->facxmlhash,
+                'codigo_cafc'      => $factura->faccafc,
                 'estado'           => $factura->facest,
                 'siat_estado'      => $factura->facsiatest,
                 'codigo_recepcion' => $factura->faccodrec,

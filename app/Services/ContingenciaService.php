@@ -74,7 +74,11 @@ class ContingenciaService
      */
     public function reconciliar(EventosSignificativo $evento, Emisor $emisor): bool
     {
-        $facturas = $evento->facturas()->where('facsiatest', Factura::SIAT_OFFLINE)->get();
+        // whereNull('faccafc'): las transcritas de talón preimpreso van en
+        // un paquete aparte — ver enviarPaqueteCafc().
+        $facturas = $evento->facturas()->where('facsiatest', Factura::SIAT_OFFLINE)
+            ->whereNull('faccafc')
+            ->get();
 
         if ($facturas->isEmpty()) {
             // Evento sin facturas asociadas (no debería pasar); lo cerramos igual.
@@ -200,8 +204,12 @@ class ContingenciaService
 
         $resultado = $siat->validarPaqueteOffline($cuis, $cufd->scovalor, (string) $evento->evecodrecpaq);
 
+        // whereNull('faccafc'): el paquete CAFC (si existe) es uno aparte,
+        // con su propio codigoRecepcion — ver validarCafc(). No hay que
+        // confundir el resultado de uno con las facturas del otro.
         $facturas = Factura::where('faceveid', $evento->eveid)
             ->where('facsiatest', Factura::SIAT_EMPAQUETADA)
+            ->whereNull('faccafc')
             ->get();
 
         switch ($resultado['status']) {
@@ -212,6 +220,123 @@ class ContingenciaService
                 $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_RECHAZADA]));
                 break;
             // 'observed' / 'processing': se deja igual, hay que reintentar la validación después.
+        }
+
+        return $resultado['status'];
+    }
+
+    /**
+     * Empaqueta y envía las facturas CAFC (transcritas de talones
+     * preimpresos) acopladas a un evento YA REGISTRADO ante el SIAT — el
+     * paquete CAFC referencia el mismo codigoEvento, pero es un envío
+     * separado del offline normal porque el campo `cafc` vive a nivel de
+     * paquete completo, no por factura (ver SiatService::enviarPaqueteOffline).
+     *
+     * Se puede llamar varias veces mientras se van transcribiendo más
+     * facturas dentro de la ventana de 72h: cada corrida solo empaqueta las
+     * que todavía no se enviaron (facsiatest = 'offline').
+     */
+    public function enviarPaqueteCafc(EventosSignificativo $evento, Emisor $emisor): bool
+    {
+        if (!$evento->evecodrec) {
+            Log::error("Contingencia CAFC emisor {$emisor->eminit}: evento {$evento->eveid} todavía no está registrado ante el SIAT, no se puede enviar el paquete CAFC.");
+            return false;
+        }
+
+        $facturas = Factura::where('faceveid', $evento->eveid)
+            ->where('facsiatest', Factura::SIAT_OFFLINE)
+            ->whereNotNull('faccafc')
+            ->get();
+
+        if ($facturas->isEmpty()) {
+            return false;
+        }
+
+        $siat = new SiatService($emisor, $evento->evesuc, $evento->evepdv);
+
+        $cuis = $siat->getActiveCuis();
+        $cufdActual = $siat->getActiveCufd();
+        if (!$cuis || !$cufdActual) {
+            Log::error("Contingencia CAFC emisor {$emisor->eminit}: sin CUIS/CUFD vigente para enviar el paquete del evento {$evento->eveid}.");
+            return false;
+        }
+
+        $paquete = [];
+        foreach ($facturas as $factura) {
+            if (!$factura->facxmlpath || !Storage::disk('local')->exists($factura->facxmlpath)) {
+                Log::error("Contingencia CAFC: factura #{$factura->facnro} sin XML guardado, se omite del paquete.");
+                continue;
+            }
+            $xml = gzdecode(Storage::disk('local')->get($factura->facxmlpath));
+            $paquete[] = ['cuf' => $factura->faccuf, 'xml' => $xml];
+        }
+
+        if (empty($paquete)) {
+            Log::error("Contingencia CAFC emisor {$emisor->eminit}: evento {$evento->eveid} sin XML válidos para empaquetar.");
+            return false;
+        }
+
+        $builder = new SiatOfflinePackageBuilder();
+        $armado  = $builder->construir($paquete);
+
+        $envio = $siat->enviarPaqueteOffline(
+            $cuis,
+            $cufdActual->scovalor,
+            $armado['archivo'],
+            now()->format('Y-m-d\TH:i:s.v'),
+            $armado['hash'],
+            $armado['cantidad'],
+            (string) $evento->evecodrec,
+            $facturas->first()->faccafc
+        );
+
+        if (($envio['status'] ?? null) !== 'received') {
+            Log::error("Contingencia CAFC emisor {$emisor->eminit}: paquete del evento {$evento->eveid} no fue recibido. "
+                . ($envio['mensaje'] ?? ''));
+            return false;
+        }
+
+        $evento->update(['evecodrecpaqcafc' => $envio['codigoRecepcion']]);
+        $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_EMPAQUETADA]));
+
+        Log::info("Contingencia CAFC emisor {$emisor->eminit}: evento {$evento->eveid}, "
+            . "paquete CAFC {$envio['codigoRecepcion']} enviado con {$armado['cantidad']} factura(s).");
+
+        return true;
+    }
+
+    /**
+     * Consulta el resultado de validación del paquete CAFC (separado del
+     * paquete offline normal, ver enviarPaqueteCafc()).
+     */
+    public function validarCafc(EventosSignificativo $evento, Emisor $emisor): string
+    {
+        if (!$evento->evecodrecpaqcafc) {
+            throw new \Exception("El evento {$evento->eveid} no tiene un paquete CAFC enviado que validar.");
+        }
+
+        $siat = new SiatService($emisor, $evento->evesuc, $evento->evepdv);
+        $cuis = $siat->getActiveCuis();
+        $cufd = $siat->getActiveCufd();
+
+        if (!$cuis || !$cufd) {
+            throw new \Exception('Sin CUIS/CUFD vigente para validar el paquete CAFC.');
+        }
+
+        $resultado = $siat->validarPaqueteOffline($cuis, $cufd->scovalor, (string) $evento->evecodrecpaqcafc);
+
+        $facturas = Factura::where('faceveid', $evento->eveid)
+            ->where('facsiatest', Factura::SIAT_EMPAQUETADA)
+            ->whereNotNull('faccafc')
+            ->get();
+
+        switch ($resultado['status']) {
+            case 'accepted':
+                $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_ACEPTADA]));
+                break;
+            case 'rejected':
+                $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_RECHAZADA]));
+                break;
         }
 
         return $resultado['status'];

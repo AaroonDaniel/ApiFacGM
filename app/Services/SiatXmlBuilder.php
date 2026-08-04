@@ -32,6 +32,7 @@ class SiatXmlBuilder
     protected CarbonInterface $issuedAt;
     protected DOMDocument $xmlDocument;
     protected int $emissionType;
+    protected ?string $cafc;
 
     /**
      * @param Factura  $factura      Factura ya persistida con sus detalles.
@@ -39,19 +40,23 @@ class SiatXmlBuilder
      * @param string   $cufdCode     Código CUFD vigente.
      * @param string   $controlCode  codigoControl del CUFD.
      * @param int      $emissionType EMISION_ONLINE | EMISION_OFFLINE
+     * @param ?string  $cafc         Código CAFC si es una factura manual transcrita
+     *                               (talón preimpreso); null para todo lo demás.
      */
     public function __construct(
         Factura $factura,
         Emisor $emisor,
         string $cufdCode,
         string $controlCode,
-        int $emissionType = self::EMISION_ONLINE
+        int $emissionType = self::EMISION_ONLINE,
+        ?string $cafc = null
     ) {
         $this->factura      = $factura;
         $this->emisor       = $emisor;
         $this->cufdCode     = $cufdCode;
         $this->controlCode  = $controlCode;
         $this->emissionType = $this->normalizeEmissionType($emissionType);
+        $this->cafc         = $cafc;
 
         // Fecha/hora real de la factura. Un solo instante para CUF, fechaEmision y fechaEnvio.
         $this->issuedAt = $factura->fachora
@@ -176,7 +181,12 @@ class SiatXmlBuilder
         $this->appendNil($header, 'montoGiftCard');
         $this->appendText($header, 'descuentoAdicional', $this->money($f->facdesc ?? 0));
         $this->appendText($header, 'codigoExcepcion', '0');
-        $this->appendNil($header, 'cafc');
+
+        if ($this->cafc !== null) {
+            $this->appendText($header, 'cafc', $this->cafc);
+        } else {
+            $this->appendNil($header, 'cafc');
+        }
 
         $this->appendText(
             $header,
