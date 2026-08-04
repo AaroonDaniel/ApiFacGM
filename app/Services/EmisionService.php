@@ -226,9 +226,11 @@ class EmisionService
 
         switch ($resp['status']) {
             case 'accepted':
+                $path = $this->guardarXml($gzip, $factura);
                 $factura->update([
                     'facsiatest' => Factura::SIAT_ACEPTADA,
                     'faccodrec'  => $resp['codigoRecepcion'] ?? null,
+                    'facxmlpath' => $path,
                 ]);
 
                 // Si veníamos de una contingencia, esto prueba que la
@@ -247,7 +249,7 @@ class EmisionService
                 break;
 
             case 'offline':
-                $path = $this->guardarXmlOffline($gzip, $factura);
+                $path = $this->guardarXml($gzip, $factura);
                 $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
                 $contingencia->acoplar($factura, $emisor, $cufd->scovalor, $cufd->scocodctrl);
                 Log::warning("Factura #{$factura->facnro} en offline (SIAT inaccesible).");
@@ -398,7 +400,7 @@ class EmisionService
 
             $factura->update(['faccuf' => $cuf, 'faccufd' => $cufd->scovalor, 'facxmlhash' => $hash]);
 
-            $path = $this->guardarXmlOffline($gzip, $factura);
+            $path = $this->guardarXml($gzip, $factura);
             $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
         } catch (Throwable $e) {
             $factura->update(['facsiatest' => Factura::SIAT_ERROR]);
@@ -426,7 +428,7 @@ class EmisionService
 
         $factura->update(['faccuf' => $cuf, 'faccufd' => $cufdValor, 'facxmlhash' => $hash]);
 
-        $path = $this->guardarXmlOffline($gzip, $factura);
+        $path = $this->guardarXml($gzip, $factura);
         $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
 
         $contingencia->acoplar($factura, $emisor, $cufdValor, $controlCode);
@@ -462,10 +464,10 @@ class EmisionService
         return ['total' => $total, 'sujeto_iva' => $total];
     }
 
-    private function guardarXmlOffline(string $gzip, Factura $factura): string
+    private function guardarXml(string $gzip, Factura $factura): string
     {
-        $fileName = "factura_offline_{$factura->facnro}_" . time() . ".xml.gz";
-        $path = "siat/offline/{$fileName}";
+        $fileName = "factura_{$factura->facsuc}_{$factura->facpdv}_{$factura->facnro}_" . time() . ".xml.gz";
+        $path = "siat/facturas/{$fileName}";
         Storage::disk('local')->put($path, $gzip);
         return $path;
     }
