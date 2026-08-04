@@ -156,6 +156,23 @@ class EmisionService
         if ($eventoActivo) {
             $comunicacion = $siat->verifyCommunication();
             if (!($comunicacion['success'] ?? false)) {
+                // La extensión de vigencia del CUFD para offline solo cubre
+                // 72h desde que arrancó la contingencia. Pasado eso, seguir
+                // emitiendo con el mismo CUFD generaría facturas inválidas
+                // que el SIAT rechazaría recién al validar el paquete
+                // completo — arrastrando también a las facturas offline
+                // que sí llegaron a tiempo. Se corta acá: requiere
+                // facturación manual (CAFC, todavía no implementada) o
+                // cerrar el evento a mano.
+                if ($eventoActivo->excedioLimiteOffline()) {
+                    $factura->update(['facsiatest' => Factura::SIAT_ERROR]);
+                    Log::critical("Factura #{$factura->facnro}: evento {$eventoActivo->eveid} superó las "
+                        . EventosSignificativo::LIMITE_HORAS_OFFLINE . 'h de contingencia offline (inicio '
+                        . "{$eventoActivo->eveini}) — requiere facturación manual (CAFC), no se puede seguir "
+                        . 'emitiendo con este CUFD.');
+                    return;
+                }
+
                 $this->emitirOffline($factura, $emisor, $eventoActivo->evecufd, $eventoActivo->evecufdctrl, $contingencia);
                 Log::warning("Factura #{$factura->facnro} en offline (contingencia activa, evento {$eventoActivo->eveid}).");
                 return;

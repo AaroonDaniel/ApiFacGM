@@ -7,6 +7,7 @@ use App\Models\Factura;
 use App\Services\ContingenciaService;
 use App\Services\SiatService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
@@ -49,6 +50,16 @@ class ProcesarContingenciasPendientes extends Command
             $emisor = $evento->emisor;
             if (!$emisor) {
                 continue;
+            }
+
+            // El plazo normativo para terminar de enviar el paquete offline
+            // es 48h desde que se registró el evento (evefin). No hay
+            // remedio automático más allá de seguir reintentando — esto es
+            // solo para que alguien se entere y pueda intervenir a mano.
+            if ($evento->excedioPlazoEnvioPaquete()) {
+                Log::critical("Emisor {$emisor->eminit}: evento {$evento->eveid} superó las "
+                    . EventosSignificativo::LIMITE_HORAS_ENVIO_PAQUETE . "h para terminar de enviar el "
+                    . "paquete offline (cerrado el {$evento->evefin}) — requiere intervención manual.");
             }
 
             $siat = new SiatService($emisor);

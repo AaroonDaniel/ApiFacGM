@@ -24,6 +24,19 @@ class EventosSignificativo extends Model
     public const ESTADO_REGISTRADO = 'registrado';
     public const ESTADO_FALLIDO = 'fallido';
 
+    /**
+     * La extensión de vigencia del CUFD para facturar offline ante una
+     * caída solo cubre 72h — pasado ese plazo, el CUFD usado ya no es
+     * válido para el SIAT y hay que pasar a facturación manual (CAFC).
+     */
+    public const LIMITE_HORAS_OFFLINE = 72;
+
+    /**
+     * Una vez cerrado el evento (registrado ante el SIAT), hay 48h para
+     * terminar de enviar el paquete offline.
+     */
+    public const LIMITE_HORAS_ENVIO_PAQUETE = 48;
+
     protected $fillable = [
         'emiid',
         'evesuc',
@@ -94,5 +107,28 @@ class EventosSignificativo extends Model
             ->whereIn('eveest', [self::ESTADO_ACTIVO, self::ESTADO_CERRADO])
             ->whereNull('evecodrecpaq')
             ->latest('eveini');
+    }
+
+    /**
+     * True si ya pasaron más de 72h desde que empezó la contingencia
+     * (eveini) — la extensión offline del CUFD ya no cubre este evento y no
+     * se debe seguir emitiendo con él.
+     */
+    public function excedioLimiteOffline(): bool
+    {
+        return $this->eveini->diffInHours(now()) >= self::LIMITE_HORAS_OFFLINE;
+    }
+
+    /**
+     * True si el evento ya se cerró/registró (evefin) hace más de 48h y
+     * todavía no se terminó de enviar el paquete offline — el registro del
+     * evento ocurre justo cuando se detecta la reconexión (ver
+     * ContingenciaService::reconciliar()), así que evefin es un proxy
+     * razonable del momento en que arrancó el plazo de 48h.
+     */
+    public function excedioPlazoEnvioPaquete(): bool
+    {
+        return $this->evefin !== null
+            && $this->evefin->diffInHours(now()) >= self::LIMITE_HORAS_ENVIO_PAQUETE;
     }
 }
