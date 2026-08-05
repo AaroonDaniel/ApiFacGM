@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\EventosSignificativo;
 use App\Models\Factura;
+use App\Models\PaqueteCafc;
 use App\Services\ContingenciaService;
 use App\Services\SiatService;
 use Illuminate\Console\Command;
@@ -150,25 +151,24 @@ class ProcesarContingenciasPendientes extends Command
     }
 
     /**
-     * Paquetes CAFC ya enviados (evecodrecpaqcafc presente) cuyas facturas
-     * siguen en 'empaquetada': se consulta si el SIAT ya terminó de
-     * validarlos.
+     * Paquetes CAFC ya enviados y todavía sin resolver (paqestado null):
+     * se consulta si el SIAT ya terminó de validar cada uno. Un evento
+     * puede tener varios — cada PaqueteCafc se valida por separado (ver
+     * ContingenciaService::enviarPaqueteCafc()).
      */
     private function validarPaquetesCafcEnviados(ContingenciaService $contingencia): void
     {
-        $eventos = EventosSignificativo::whereNotNull('evecodrecpaqcafc')
-            ->whereHas('facturas', fn ($q) => $q->where('facsiatest', Factura::SIAT_EMPAQUETADA)->whereNotNull('faccafc'))
-            ->get();
+        $paquetes = PaqueteCafc::pendienteDeValidar()->with('evento.emisor')->get();
 
-        foreach ($eventos as $evento) {
-            $emisor = $evento->emisor;
+        foreach ($paquetes as $paqueteCafc) {
+            $emisor = $paqueteCafc->evento?->emisor;
             if (!$emisor) {
                 continue;
             }
 
-            $this->info("Emisor {$emisor->eminit}: validando paquete CAFC del evento {$evento->eveid}...");
+            $this->info("Emisor {$emisor->eminit}: validando paquete CAFC #{$paqueteCafc->paqid} (evento {$paqueteCafc->eveid})...");
             try {
-                $status = $contingencia->validarCafc($evento, $emisor);
+                $status = $contingencia->validarCafc($paqueteCafc, $emisor);
                 $this->info("  Estado: {$status}");
             } catch (Throwable $e) {
                 $this->error("  Falló: " . $e->getMessage());

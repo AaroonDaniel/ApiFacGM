@@ -64,7 +64,6 @@ class EventosSignificativo extends Model
         'evecufdctrl',
         'evecodrec',
         'evecodrecpaq',
-        'evecodrecpaqcafc',
         'eveest',
         'eveusr',
         'evereg',
@@ -87,6 +86,16 @@ class EventosSignificativo extends Model
     public function facturas(): HasMany
     {
         return $this->hasMany(Factura::class, 'faceveid', 'eveid');
+    }
+
+    /**
+     * Un evento puede tener varios paquetes CAFC (la transcripción manual
+     * puede llegar en tandas dentro de la ventana de 72h) — ver
+     * ContingenciaService::enviarPaqueteCafc().
+     */
+    public function paquetesCafc(): HasMany
+    {
+        return $this->hasMany(PaqueteCafc::class, 'eveid', 'eveid');
     }
 
     public function scopeDisponibleParaAcoplar($query)

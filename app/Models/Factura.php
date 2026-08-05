@@ -31,6 +31,7 @@ class Factura extends Model
         'facxmlhash',
         'faccafc',
         'facnumeroarchivo',
+        'facpaquetecafcid',
         'facfch',
         'fachora',
         'facnomrazon',
@@ -81,6 +82,11 @@ class Factura extends Model
     public function evento(): BelongsTo
     {
         return $this->belongsTo(EventosSignificativo::class, 'faceveid', 'eveid'); // era 'eveid','eveid'
+    }
+
+    public function paqueteCafc(): BelongsTo
+    {
+        return $this->belongsTo(PaqueteCafc::class, 'facpaquetecafcid', 'paqid');
     }
 
     public function scopeHuerfano($query)
