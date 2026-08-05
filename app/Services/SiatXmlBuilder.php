@@ -212,12 +212,33 @@ class SiatXmlBuilder
         }
 
         // --- Montos ---
+        // codigoMoneda/tipoCambio: mono-moneda en el uso real (1 =
+        // BOLIVIANO, confirmado contra el catálogo real sincronizado), pero
+        // el Plan de Pruebas de certificación del SIN (Fase 1) exige poder
+        // emitir en moneda extranjera con su tipo de cambio real — sin
+        // estas fórmulas, esos casos de prueba obligatorios se rechazan por
+        // inconsistencia aritmética y el software no avanza de fase.
+        // Factura en memoria sin pasar por EmisionService::resolverMoneda()
+        // (p.ej. fixtures de test que construyen el modelo directo, sin
+        // guardar) no tiene factipocambio seteado — cae al 1.0 real de
+        // BOLIVIANO en vez de reventar la división de abajo.
+        $tipoCambio = (float) $f->factipocambio;
+        if ($tipoCambio <= 0) {
+            $tipoCambio = 1.0;
+        }
+
         $this->appendText($header, 'montoTotal', $this->money($f->facmonto));
         $this->appendText($header, 'montoTotalSujetoIva', $this->money($f->facmontoiva));
-        $this->appendText($header, 'codigoMoneda', '1');
-        $this->appendText($header, 'tipoCambio', '1');
-        $this->appendText($header, 'montoTotalMoneda', $this->money($f->facmonto));
-        $this->appendNil($header, 'montoGiftCard');
+        $this->appendText($header, 'codigoMoneda', (string) ($f->faccodmon ?: 1));
+        $this->appendText($header, 'tipoCambio', $this->money($tipoCambio));
+        $this->appendText($header, 'montoTotalMoneda', $this->money((float) $f->facmonto / $tipoCambio));
+
+        if (!empty($f->facmontogiftcard) && $f->facmontogiftcard > 0) {
+            $this->appendText($header, 'montoGiftCard', $this->money($f->facmontogiftcard));
+        } else {
+            $this->appendNil($header, 'montoGiftCard');
+        }
+
         $this->appendText($header, 'descuentoAdicional', $this->money($f->facdesc ?? 0));
         $this->appendText($header, 'codigoExcepcion', '0');
 

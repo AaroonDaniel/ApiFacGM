@@ -7,6 +7,7 @@ use App\Models\Emisor;
 use App\Models\EventosSignificativo;
 use App\Models\Factura;
 use App\Models\MetodoPago;
+use App\Models\Moneda;
 use App\Models\MotivoAnulacion;
 use App\Models\ProductoServicio;
 use App\Models\PuntoVenta;
@@ -101,7 +102,10 @@ trait InteractsWithFacturacion
         ]);
         UnidadMedida::firstOrCreate(['unicod' => 57], ['unidesc' => 'UNIDAD (SERVICIOS)']);
         MetodoPago::firstOrCreate(['mpacod' => 1], ['mpadesc' => 'EFECTIVO']);
+        MetodoPago::firstOrCreate(['mpacod' => 27], ['mpadesc' => 'GIFT-CARD']);
         TipoDocumentoIdentidad::firstOrCreate(['tdicod' => 1], ['tdidesc' => 'CI - CEDULA DE IDENTIDAD']);
+        Moneda::firstOrCreate(['moncod' => Moneda::BOLIVIANO], ['mondesc' => 'BOLIVIANO']);
+        Moneda::firstOrCreate(['moncod' => 46], ['mondesc' => 'DOLAR ESTADOUNIDENSE']);
     }
 
     /**

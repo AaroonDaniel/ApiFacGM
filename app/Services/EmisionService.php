@@ -7,6 +7,7 @@ use App\Models\Emisor;
 use App\Models\EventosSignificativo;
 use App\Models\Factura;
 use App\Models\MetodoPago;
+use App\Models\Moneda;
 use App\Models\ProductoServicio;
 use App\Models\PuntoVenta;
 use App\Models\RangoCafc;
@@ -61,13 +62,16 @@ class EmisionService
         }
 
         $this->validarCatalogos($emisor, $datos);
+        $moneda = $this->resolverMoneda($datos);
+        $montoGiftCard = (float) ($datos['monto_gift_card'] ?? 0);
+        $this->validarGiftCard($datos['metodo_pago'], $montoGiftCard);
 
         // -------- FASE 1: persistir --------
         try {
-            $factura = DB::transaction(function () use ($emisor, $puntoVenta, $datos) {
+            $factura = DB::transaction(function () use ($emisor, $puntoVenta, $datos, $moneda, $montoGiftCard) {
                 $numero = $this->siguienteNumero($emisor, $puntoVenta);
 
-                $totales = $this->calcularTotales($datos['detalle'], $datos['descuento_adicional'] ?? 0);
+                $totales = $this->calcularTotales($datos['detalle'], $datos['descuento_adicional'] ?? 0, $montoGiftCard);
 
                 $factura = Factura::create([
                     'emiid'        => $emisor->emiid,
@@ -85,6 +89,9 @@ class EmisionService
                     'facmonto'     => $totales['total'],
                     'facmontoiva'  => $totales['sujeto_iva'],
                     'facdesc'      => $datos['descuento_adicional'] ?? 0,
+                    'faccodmon'       => $moneda['codigo'],
+                    'factipocambio'   => $moneda['tipo_cambio'],
+                    'facmontogiftcard' => $montoGiftCard > 0 ? $montoGiftCard : null,
                     'facest'       => Factura::ESTADO_VIGENTE,
                     'facsiatest'   => Factura::SIAT_PENDIENTE,
                     'facsisorig'   => $datos['sistema_origen'],
@@ -323,10 +330,13 @@ class EmisionService
 
         $rango = $this->validarRangoCafc($emisor, $puntoVenta, $datos['codigo_cafc'], $datos['numero_factura']);
         $this->validarCatalogos($emisor, $datos);
+        $moneda = $this->resolverMoneda($datos);
+        $montoGiftCard = (float) ($datos['monto_gift_card'] ?? 0);
+        $this->validarGiftCard($datos['metodo_pago'], $montoGiftCard);
 
         try {
-            $factura = DB::transaction(function () use ($emisor, $puntoVenta, $evento, $datos) {
-                $totales = $this->calcularTotales($datos['detalle'], $datos['descuento_adicional'] ?? 0);
+            $factura = DB::transaction(function () use ($emisor, $puntoVenta, $evento, $datos, $moneda, $montoGiftCard) {
+                $totales = $this->calcularTotales($datos['detalle'], $datos['descuento_adicional'] ?? 0, $montoGiftCard);
 
                 $factura = Factura::create([
                     'emiid'        => $emisor->emiid,
@@ -344,6 +354,9 @@ class EmisionService
                     'facmonto'     => $totales['total'],
                     'facmontoiva'  => $totales['sujeto_iva'],
                     'facdesc'      => $datos['descuento_adicional'] ?? 0,
+                    'faccodmon'       => $moneda['codigo'],
+                    'factipocambio'   => $moneda['tipo_cambio'],
+                    'facmontogiftcard' => $montoGiftCard > 0 ? $montoGiftCard : null,
                     'facest'       => Factura::ESTADO_VIGENTE,
                     'facsiatest'   => Factura::SIAT_PENDIENTE,
                     'facsisorig'   => $datos['sistema_origen'],
@@ -564,7 +577,7 @@ class EmisionService
         return $nuevoNumero;
     }
 
-    private function calcularTotales(array $detalle, float $descuentoAdicional): array
+    private function calcularTotales(array $detalle, float $descuentoAdicional, float $montoGiftCard = 0): array
     {
         $total = 0;
         foreach ($detalle as $linea) {
@@ -572,7 +585,68 @@ class EmisionService
         }
         $total -= $descuentoAdicional;
 
-        return ['total' => $total, 'sujeto_iva' => $total];
+        if ($montoGiftCard > $total) {
+            throw new Exception("El monto de gift card ({$montoGiftCard}) no puede superar el monto total de la factura ({$total}).");
+        }
+
+        // montoTotalSujetoIva = montoTotal - montoGiftCard (fórmula del
+        // XSD): sin gift card, montoGiftCard es 0 y sujeto_iva == total.
+        return ['total' => $total, 'sujeto_iva' => $total - $montoGiftCard];
+    }
+
+    /**
+     * Resuelve codigoMoneda/tipoCambio de los datos de entrada. BOLIVIANO
+     * (moncod=1) es el único caso real de producción y no requiere
+     * tipoCambio explícito (se fija en 1.0); cualquier otra moneda —
+     * relevante solo para los casos de prueba de moneda extranjera de la
+     * certificación Fase 1 del SIN— exige que el tipo de cambio venga
+     * explícito y mayor a 0, porque montoTotalMoneda = montoTotal /
+     * tipoCambio y una división por 0 o un valor inventado haría que el
+     * validador del SIN rechace el XML por inconsistencia aritmética.
+     */
+    private function resolverMoneda(array $datos): array
+    {
+        $codigoMoneda = (int) ($datos['moneda']['codigo'] ?? Moneda::BOLIVIANO);
+
+        if (!Moneda::where('moncod', $codigoMoneda)->exists()) {
+            throw new Exception("Código de moneda '{$codigoMoneda}' no es un código válido del SIN.");
+        }
+
+        if ($codigoMoneda === Moneda::BOLIVIANO) {
+            $tipoCambio = 1.0;
+        } else {
+            $tipoCambio = (float) ($datos['moneda']['tipo_cambio'] ?? 0);
+            if ($tipoCambio <= 0) {
+                throw new Exception("El tipo de cambio es obligatorio y debe ser mayor a 0 cuando la moneda no es BOLIVIANO (código {$codigoMoneda}).");
+            }
+        }
+
+        return ['codigo' => $codigoMoneda, 'tipo_cambio' => $tipoCambio];
+    }
+
+    /**
+     * El SIN valida que el pago con gift card corresponda al método de
+     * pago declarado — confirmado en vivo contra el SIAT piloto real: un
+     * montoGiftCard > 0 con un método de pago que no incluye "GIFT" (ej.
+     * DÉBITO AUTOMÁTICO - VALE, código 299) se rechaza con "MONTO GIFT
+     * CARD NO CORRESPONDE AL METODO DE PAGO". Se valida acá con el mismo
+     * criterio (mpadesc contiene GIFT) para dar un 422 inmediato en vez de
+     * esperar el rechazo remoto.
+     */
+    private function validarGiftCard(int $metodoPago, float $montoGiftCard): void
+    {
+        if ($montoGiftCard <= 0) {
+            return;
+        }
+
+        $valido = MetodoPago::where('mpacod', $metodoPago)
+            ->where('mpadesc', 'like', '%GIFT%')
+            ->exists();
+
+        if (!$valido) {
+            throw new Exception("El monto de gift card solo es válido con un método de pago que incluya GIFT-CARD; "
+                . "el método de pago '{$metodoPago}' no corresponde.");
+        }
     }
 
     private function guardarXml(string $gzip, Factura $factura): string
