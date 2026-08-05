@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Api;
 
+use App\Models\MotivoEventoSignificativo;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InteractsWithFacturacion;
 use Tests\TestCase;
@@ -128,5 +129,20 @@ class EventoSignificativoTest extends TestCase
         $this->conAuth()->postJson('/api/eventos-significativos', $datos)
             ->assertStatus(422)
             ->assertJson(['exito' => false]);
+    }
+
+    public function test_si_el_catalogo_esta_sincronizado_manda_el_sobre_el_respaldo_hardcodeado(): void
+    {
+        // Catálogo sincronizado con SOLO el motivo 7 — el 5 (que sí está en
+        // el respaldo hardcodeado) debe quedar rechazado, confirmando que
+        // el catálogo real tiene prioridad sobre el fallback.
+        MotivoEventoSignificativo::create(['mevcod' => 7, 'mevdesc' => 'CORTE DE SUMINISTRO DE ENERGIA ELECTRICA']);
+
+        $datos = $this->datosValidos();
+        $datos['codigo_motivo'] = 5; // COD_FALLA_SOFTWARE, no sincronizado en este escenario.
+
+        $this->conAuth()->postJson('/api/eventos-significativos', $datos)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['codigo_motivo']);
     }
 }

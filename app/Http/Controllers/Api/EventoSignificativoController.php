@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Concerns\ResuelveEmisorYPuntoVenta;
 use App\Http\Controllers\Controller;
 use App\Models\EventosSignificativo;
+use App\Models\MotivoEventoSignificativo;
 use App\Services\ContingenciaService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -36,15 +37,7 @@ class EventoSignificativoController extends Controller
             'emisor_nit'               => 'required|string',
             'punto_venta.sucursal'     => 'nullable|integer|min:0',
             'punto_venta.punto_venta'  => 'nullable|integer|min:0',
-            'codigo_motivo'            => ['required', 'integer', Rule::in([
-                EventosSignificativo::COD_CORTE_INTERNET,
-                EventosSignificativo::COD_SIN_INACCESIBLE,
-                EventosSignificativo::COD_ZONA_SIN_INTERNET,
-                EventosSignificativo::COD_VENTA_SIN_INTERNET,
-                EventosSignificativo::COD_FALLA_SOFTWARE,
-                EventosSignificativo::COD_CAMBIO_INFRA,
-                EventosSignificativo::COD_CORTE_ENERGIA,
-            ])],
+            'codigo_motivo'            => ['required', 'integer', Rule::in($this->codigosMotivoValidos())],
             'descripcion'              => 'required|string|max:500',
             'fecha_inicio'             => 'required|date|before_or_equal:now',
             'fecha_fin'                => 'required|date|after:fecha_inicio|before_or_equal:now',
@@ -76,6 +69,33 @@ class EventoSignificativoController extends Controller
             'exito'  => true,
             'evento' => $this->payload($evento),
         ], 201);
+    }
+
+    /**
+     * Códigos de motivo válidos, tomados del catálogo real sincronizado
+     * (ver comando siat:sincronizar-catalogos) — así, si el SIN agrega o
+     * cambia un motivo, la validación lo sigue automáticamente sin tocar
+     * código. Si el catálogo todavía no se sincronizó nunca (instalación
+     * nueva), cae a los 7 valores verificados en vivo contra el piloto
+     * (2026-08-04) en vez de dejar el endpoint inutilizable.
+     */
+    private function codigosMotivoValidos(): array
+    {
+        $delCatalogo = MotivoEventoSignificativo::pluck('mevcod')->all();
+
+        if (!empty($delCatalogo)) {
+            return $delCatalogo;
+        }
+
+        return [
+            EventosSignificativo::COD_CORTE_INTERNET,
+            EventosSignificativo::COD_SIN_INACCESIBLE,
+            EventosSignificativo::COD_ZONA_SIN_INTERNET,
+            EventosSignificativo::COD_VENTA_SIN_INTERNET,
+            EventosSignificativo::COD_FALLA_SOFTWARE,
+            EventosSignificativo::COD_CAMBIO_INFRA,
+            EventosSignificativo::COD_CORTE_ENERGIA,
+        ];
     }
 
     private function payload(EventosSignificativo $evento): array
