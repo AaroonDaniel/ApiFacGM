@@ -1,12 +1,7 @@
 <?php
 
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\FacturaController;
-
-Route::get('/user', function (Request $request) {
-    return $request->user();
-})->middleware('auth:sanctum');
 
 Route::middleware(['throttle:60,1', 'sistema.auth', 'throttle:sistema'])->group(function () {
     Route::post('/facturas', [FacturaController::class, 'store']);
