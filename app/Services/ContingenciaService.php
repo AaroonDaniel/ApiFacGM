@@ -75,9 +75,12 @@ class ContingenciaService
     public function reconciliar(EventosSignificativo $evento, Emisor $emisor): bool
     {
         // whereNull('faccafc'): las transcritas de talón preimpreso van en
-        // un paquete aparte — ver enviarPaqueteCafc().
+        // un paquete aparte — ver enviarPaqueteCafc(). orderBy('facid'):
+        // orden determinístico — hace falta para que facnumeroarchivo (la
+        // posición dentro del .tar) sea reproducible al validar después.
         $facturas = $evento->facturas()->where('facsiatest', Factura::SIAT_OFFLINE)
             ->whereNull('faccafc')
+            ->orderBy('facid')
             ->get();
 
         if ($facturas->isEmpty()) {
@@ -142,11 +145,14 @@ class ContingenciaService
 
         // --- Empaquetar y enviar ---
         $paquete = [];
+        $numeroArchivo = 0;
         foreach ($facturas as $factura) {
             if (!$factura->facxmlpath || !Storage::disk('local')->exists($factura->facxmlpath)) {
                 Log::error("Contingencia: factura #{$factura->facnro} sin XML offline guardado, se omite del paquete.");
                 continue;
             }
+            $numeroArchivo++;
+            $factura->update(['facnumeroarchivo' => $numeroArchivo]);
             $xml = gzdecode(Storage::disk('local')->get($factura->facxmlpath));
             $paquete[] = ['cuf' => $factura->faccuf, 'xml' => $xml];
         }
@@ -212,8 +218,26 @@ class ContingenciaService
             ->whereNull('faccafc')
             ->get();
 
-        $notificacion = new NotificacionFacturaService();
+        $this->aplicarResultadoValidacion($facturas, $resultado, new NotificacionFacturaService());
 
+        return $resultado['status'];
+    }
+
+    /**
+     * Aplica el resultado de validación a las facturas de un paquete.
+     *
+     * Si el estado agregado es 'rejected' pero el SIAT mandó mensajesList
+     * con numeroArchivo (posición dentro del .tar, ver
+     * Factura::facnumeroarchivo), se usa ese detalle para NO tumbar
+     * documentos que en realidad no tuvieron un error real — solo el/los
+     * marcados ahí se rechazan, el resto queda aceptado. Sin ese detalle
+     * granular (mensajesList vacío), se mantiene el comportamiento
+     * conservador anterior: rechazar el paquete completo. No está
+     * confirmado en vivo que el SIAT realmente distinga documentos dentro
+     * de un paquete rechazado — este es el fallback seguro mientras tanto.
+     */
+    private function aplicarResultadoValidacion($facturas, array $resultado, NotificacionFacturaService $notificacion): void
+    {
         switch ($resultado['status']) {
             case 'accepted':
                 $facturas->each(function (Factura $f) use ($notificacion) {
@@ -221,13 +245,35 @@ class ContingenciaService
                     $notificacion->notificarSiCorresponde($f);
                 });
                 break;
+
             case 'rejected':
-                $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_RECHAZADA]));
+                $archivosConError = collect($resultado['mensajes'] ?? [])
+                    ->filter(fn ($m) => !$m['advertencia'] && $m['numeroArchivo'] !== null)
+                    ->pluck('numeroArchivo')
+                    ->unique();
+
+                if ($archivosConError->isEmpty()) {
+                    // Sin detalle granular real: rechazar todo el paquete,
+                    // como antes.
+                    $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_RECHAZADA]));
+                    break;
+                }
+
+                $facturas->each(function (Factura $f) use ($archivosConError, $notificacion) {
+                    // Sin facnumeroarchivo (dato no registrado) se rechaza
+                    // por seguridad — no hay forma de confirmar que este
+                    // documento puntual no fue uno de los marcados.
+                    if ($f->facnumeroarchivo === null || $archivosConError->contains($f->facnumeroarchivo)) {
+                        $f->update(['facsiatest' => Factura::SIAT_RECHAZADA]);
+                        return;
+                    }
+                    $f->update(['facsiatest' => Factura::SIAT_ACEPTADA]);
+                    $notificacion->notificarSiCorresponde($f);
+                });
                 break;
+
             // 'observed' / 'processing': se deja igual, hay que reintentar la validación después.
         }
-
-        return $resultado['status'];
     }
 
     /**
@@ -251,6 +297,7 @@ class ContingenciaService
         $facturas = Factura::where('faceveid', $evento->eveid)
             ->where('facsiatest', Factura::SIAT_OFFLINE)
             ->whereNotNull('faccafc')
+            ->orderBy('facid')
             ->get();
 
         if ($facturas->isEmpty()) {
@@ -267,11 +314,14 @@ class ContingenciaService
         }
 
         $paquete = [];
+        $numeroArchivo = 0;
         foreach ($facturas as $factura) {
             if (!$factura->facxmlpath || !Storage::disk('local')->exists($factura->facxmlpath)) {
                 Log::error("Contingencia CAFC: factura #{$factura->facnro} sin XML guardado, se omite del paquete.");
                 continue;
             }
+            $numeroArchivo++;
+            $factura->update(['facnumeroarchivo' => $numeroArchivo]);
             $xml = gzdecode(Storage::disk('local')->get($factura->facxmlpath));
             $paquete[] = ['cuf' => $factura->faccuf, 'xml' => $xml];
         }
@@ -335,19 +385,7 @@ class ContingenciaService
             ->whereNotNull('faccafc')
             ->get();
 
-        $notificacion = new NotificacionFacturaService();
-
-        switch ($resultado['status']) {
-            case 'accepted':
-                $facturas->each(function (Factura $f) use ($notificacion) {
-                    $f->update(['facsiatest' => Factura::SIAT_ACEPTADA]);
-                    $notificacion->notificarSiCorresponde($f);
-                });
-                break;
-            case 'rejected':
-                $facturas->each(fn (Factura $f) => $f->update(['facsiatest' => Factura::SIAT_RECHAZADA]));
-                break;
-        }
+        $this->aplicarResultadoValidacion($facturas, $resultado, new NotificacionFacturaService());
 
         return $resultado['status'];
     }

@@ -695,6 +695,14 @@ class SiatService
     /**
      * Consulta el resultado de validación de un paquete ya enviado.
      * status: 'accepted' | 'observed' | 'rejected' | 'processing'
+     *
+     * 'mensajes': mensajesList normalizado — cada uno con numeroArchivo
+     * (posición del documento dentro del .tar, ver Factura::facnumeroarchivo)
+     * y advertencia (si es solo un aviso, no un rechazo real de ese
+     * documento puntual). Permite a ContingenciaService distinguir, dentro
+     * de un paquete RECHAZADA/OBSERVADA, cuáles documentos puntuales
+     * tuvieron un error real — sin esto, un solo documento malo tumbaría
+     * todo el paquete completo.
      */
     public function validarPaqueteOffline(string $cuis, string $cufd, string $codigoRecepcionPaquete): array
     {
@@ -725,9 +733,10 @@ class SiatService
                 $status === 'accepted' ? SiatTransaccion::ESTADO_EXITO : SiatTransaccion::ESTADO_RECHAZO);
 
             return [
-                'status'  => $status,
-                'mensaje' => $this->extractSiatMessage($r),
-                'raw'     => $response,
+                'status'   => $status,
+                'mensaje'  => $this->extractSiatMessage($r),
+                'mensajes' => $this->normalizarMensajesRecepcion($r),
+                'raw'      => $response,
             ];
         } catch (SoapFault $fault) {
             Log::error('SIAT validarPaqueteOffline: ' . $fault->getMessage());
@@ -908,5 +917,34 @@ class SiatService
             return $msg->descripcion ?? json_encode($msg);
         }
         return $response->codigoDescripcion ?? 'Respuesta sin mensaje';
+    }
+
+    /**
+     * Normaliza mensajesList (mensajeRecepcion: codigo, descripcion,
+     * advertencia, numeroArchivo, numeroDetalle — confirmado en el WSDL
+     * real de ServicioFacturacionCompraVenta) a un array plano de arrays.
+     * El SoapClient colapsa un solo elemento a un objeto suelto en vez de
+     * un array de 1, igual que en sincronizar().
+     *
+     * @return array<int, array{codigo: ?int, descripcion: ?string, advertencia: bool, numeroArchivo: ?int, numeroDetalle: ?int}>
+     */
+    private function normalizarMensajesRecepcion($response): array
+    {
+        if (!$response || empty($response->mensajesList)) {
+            return [];
+        }
+
+        $mensajes = $response->mensajesList;
+        if (is_object($mensajes)) {
+            $mensajes = [$mensajes];
+        }
+
+        return collect($mensajes)->map(fn ($m) => [
+            'codigo'        => $m->codigo ?? null,
+            'descripcion'   => $m->descripcion ?? null,
+            'advertencia'   => (bool) ($m->advertencia ?? false),
+            'numeroArchivo' => isset($m->numeroArchivo) ? (int) $m->numeroArchivo : null,
+            'numeroDetalle' => isset($m->numeroDetalle) ? (int) $m->numeroDetalle : null,
+        ])->all();
     }
 }

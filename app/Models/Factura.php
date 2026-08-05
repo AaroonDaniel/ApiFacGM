@@ -30,6 +30,7 @@ class Factura extends Model
         'faccufd',
         'facxmlhash',
         'faccafc',
+        'facnumeroarchivo',
         'facfch',
         'fachora',
         'facnomrazon',
