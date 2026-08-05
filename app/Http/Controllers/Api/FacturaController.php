@@ -263,6 +263,31 @@ class FacturaController extends Controller
     }
 
     /**
+     * POST /api/facturas/{factura}/revertir-anulacion — revertir una
+     * anulación hecha por error.
+     */
+    public function revertirAnulacion(Request $request, Factura $factura): JsonResponse
+    {
+        if ($factura->facsisorig !== $request->attributes->get('sistemaCliente')->siscod) {
+            return response()->json([
+                'exito' => false,
+                'error' => 'No tienes acceso a esta factura.',
+            ], 403);
+        }
+
+        try {
+            $factura = $this->anulacionService->revertirAnulacion($factura);
+        } catch (Throwable $e) {
+            return response()->json([
+                'exito' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        }
+
+        return response()->json($this->payload($factura), 200);
+    }
+
+    /**
      * Arma el cuerpo JSON con el estado de la factura.
      */
     private function payload(Factura $factura): array

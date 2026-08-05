@@ -566,6 +566,46 @@ class SiatService
         }
     }
 
+    /**
+     * Revierte una anulación hecha por error. Verificado contra el WSDL
+     * real (reversionAnulacionFactura / solicitudReversionAnulacion): el
+     * request es igual al de anulacionFactura pero sin codigoMotivo.
+     */
+    public function reversionAnulacionFactura(string $cuis, string $cufd, string $cuf, ?int $facturaId = null): array
+    {
+        $params = ['SolicitudServicioReversionAnulacionFactura' => array_merge($this->getBaseParameters(), [
+            'codigoDocumentoSector' => 1,
+            'codigoEmision'         => 1,
+            'tipoFacturaDocumento'  => 1,
+            'cuis'                  => $cuis,
+            'cufd'                  => $cufd,
+            'cuf'                   => $cuf,
+        ])];
+
+        try {
+            $client   = $this->getSoapClient('ServicioFacturacionCompraVenta');
+            $response = $client->reversionAnulacionFactura($params);
+            $r = $response->RespuestaServicioFacturacion ?? null;
+
+            if ($r && !empty($r->transaccion)) {
+                $this->registrarTransaccion('reversionAnulacionFactura', $params, $response, SiatTransaccion::ESTADO_EXITO, $facturaId);
+                return ['status' => 'accepted', 'mensaje' => 'Anulación revertida ante el SIAT', 'raw' => $response];
+            }
+
+            $this->registrarTransaccion('reversionAnulacionFactura', $params, $response, SiatTransaccion::ESTADO_RECHAZO, $facturaId);
+            return ['status' => 'rejected', 'mensaje' => $this->extractSiatMessage($r), 'raw' => $response];
+        } catch (SoapFault $fault) {
+            Log::error('SIAT reversionAnulacionFactura: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('reversionAnulacionFactura', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO, $facturaId);
+            return [
+                'status'  => $offline ? 'offline' : 'rejected',
+                'mensaje' => $fault->getMessage(), 'raw' => null,
+            ];
+        }
+    }
+
     // ==========================================
     // CONTINGENCIA (EVENTOS SIGNIFICATIVOS Y PAQUETES OFFLINE)
     // ==========================================
