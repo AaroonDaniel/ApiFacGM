@@ -44,10 +44,12 @@ class ProcesarContingenciasPendientes extends Command
      */
     private function reconciliarPendientes(ContingenciaService $contingencia): void
     {
-        $eventos = EventosSignificativo::whereIn('eveest', [
-            EventosSignificativo::ESTADO_ACTIVO,
-            EventosSignificativo::ESTADO_CERRADO,
-        ])->whereNull('evecodrecpaq')->get();
+        // necesitaReconciliacionNormal(): excluye eventos puramente CAFC
+        // (ContingenciaService::registrarManual() sin facturas offline
+        // "normales") que ya se registraron y no tienen nada que empaquetar
+        // en este canal — sin este filtro, quedarían reintentándose sin
+        // efecto en cada corrida, para siempre.
+        $eventos = EventosSignificativo::necesitaReconciliacionNormal()->get();
 
         foreach ($eventos as $evento) {
             $emisor = $evento->emisor;

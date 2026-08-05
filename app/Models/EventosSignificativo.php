@@ -122,9 +122,33 @@ class EventosSignificativo extends Model
         return $query->where('emiid', $emiid)
             ->where('evesuc', $suc)
             ->where('evepdv', $pdv)
-            ->whereIn('eveest', [self::ESTADO_ACTIVO, self::ESTADO_CERRADO])
-            ->whereNull('evecodrecpaq')
+            ->necesitaReconciliacionNormal()
             ->latest('eveini');
+    }
+
+    /**
+     * Condición común: el evento todavía necesita que
+     * ContingenciaService::reconciliar() haga algo en el canal OFFLINE
+     * NORMAL (registrarse ante el SIAT, o terminar de empaquetar/enviar
+     * sus facturas offline "no CAFC").
+     *
+     * Sin este chequeo adicional, un evento puramente CAFC
+     * (ContingenciaService::registrarManual() sin facturas offline
+     * "normales" acopladas) queda para siempre con evecodrecpaq null —
+     * nunca hay nada que empaquetar ahí — y tanto este comando como el
+     * disparador automático de EmisionService lo reintentarían sin efecto
+     * en cada corrida, indefinidamente.
+     */
+    public function scopeNecesitaReconciliacionNormal($query)
+    {
+        return $query->whereIn('eveest', [self::ESTADO_ACTIVO, self::ESTADO_CERRADO])
+            ->where(function ($q) {
+                $q->whereNull('evecodrec')
+                    ->orWhere(function ($q2) {
+                        $q2->whereNull('evecodrecpaq')
+                            ->whereHas('facturas', fn ($fq) => $fq->where('facsiatest', Factura::SIAT_OFFLINE)->whereNull('faccafc'));
+                    });
+            });
     }
 
     /**
