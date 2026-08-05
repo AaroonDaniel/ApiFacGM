@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Factura;
 use App\Models\Emisor;
+use App\Models\Leyenda;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use DOMDocument;
@@ -33,6 +34,7 @@ class SiatXmlBuilder
     protected DOMDocument $xmlDocument;
     protected int $emissionType;
     protected ?string $cafc;
+    protected string $leyenda;
 
     /**
      * @param Factura  $factura      Factura ya persistida con sus detalles.
@@ -63,8 +65,45 @@ class SiatXmlBuilder
             ? Carbon::parse($factura->fachora)
             : Carbon::now();
 
+        // Se resuelve UNA sola vez acá (no en buildHeader()): buildXml() se
+        // llama más de una vez sobre la misma instancia (getGzipArchive()
+        // vuelve a llamarlo internamente) y el hash SHA-256 se calcula
+        // sobre la primera llamada — si la leyenda saliera al azar en cada
+        // buildHeader(), el XML comprimido que se manda no coincidiría con
+        // el que se hasheó.
+        $this->leyenda = $this->resolverLeyenda();
+
         $this->xmlDocument = new DOMDocument('1.0', 'UTF-8');
         $this->xmlDocument->formatOutput = true;
+    }
+
+    /**
+     * Leyenda real del catálogo sincronizado (ver comando
+     * siat:sincronizar-catalogos), elegida al azar entre las que
+     * correspondan a la actividad económica de la factura — el SIN exige
+     * alternarlas, no usar siempre la misma. Si el catálogo está vacío para
+     * esa actividad (no sincronizado, o actividad no reconocida), cae al
+     * texto fijo de config('siat.leyenda_defecto').
+     */
+    private function resolverLeyenda(): string
+    {
+        $actividad = $this->factura->detalles->first()?->facdetacteco;
+
+        $leyenda = $actividad
+            ? Leyenda::where('leyactcod', $actividad)->inRandomOrder()->value('leydesc')
+            : null;
+
+        return $leyenda ?? config('siat.leyenda_defecto', 'Ley N° 453: El proveedor deberá entregar el producto en las modalidades y términos ofertados.');
+    }
+
+    /**
+     * La leyenda que efectivamente quedó en el XML — EmisionService la
+     * persiste en facturas.facleyenda para que la representación gráfica
+     * muestre la misma, no una nueva elegida al azar después.
+     */
+    public function getLeyendaUsada(): string
+    {
+        return $this->leyenda;
     }
 
     private function normalizeEmissionType(int $type): int
@@ -188,11 +227,7 @@ class SiatXmlBuilder
             $this->appendNil($header, 'cafc');
         }
 
-        $this->appendText(
-            $header,
-            'leyenda',
-            config('siat.leyenda_defecto', 'Ley N° 453: El proveedor deberá entregar el producto en las modalidades y términos ofertados.')
-        );
+        $this->appendText($header, 'leyenda', $this->leyenda);
 
         // Usuario: por ahora la razón social del emisor (la pasarela no tiene operadores aún).
         $this->appendText($header, 'usuario', $e->emirazsoc);

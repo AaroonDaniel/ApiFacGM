@@ -30,6 +30,7 @@ class Factura extends Model
         'faccufd',
         'facxmlhash',
         'faccafc',
+        'facleyenda',
         'facnumeroarchivo',
         'facpaquetecafcid',
         'facfch',
@@ -108,12 +109,17 @@ class Factura extends Model
     }
 
     /**
-     * Leyendas obligatorias de la representación gráfica.
+     * Leyendas obligatorias de la representación gráfica. La primera es la
+     * que realmente quedó en el XML enviado (facleyenda, ver
+     * SiatXmlBuilder::resolverLeyenda()) — no se vuelve a elegir al azar
+     * acá, porque debe ser la misma que ya está en el documento fiscal. Sin
+     * facleyenda (factura rechazada antes de construir el XML), cae al
+     * texto fijo de config.
      */
     public function leyendas(): array
     {
         return [
-            config('siat.leyenda_defecto'),
+            $this->facleyenda ?? config('siat.leyenda_defecto'),
             'Esta factura contribuye al desarrollo del país. El uso ilícito de este documento será pasible a sanción de acuerdo a Ley.',
             $this->facsiatest === self::SIAT_OFFLINE
                 ? 'FACTURA EMITIDA EN CONTINGENCIA'

@@ -2,12 +2,17 @@
 
 namespace App\Services;
 
+use App\Models\Actividad;
 use App\Models\Emisor;
 use App\Models\EventosSignificativo;
 use App\Models\Factura;
+use App\Models\MetodoPago;
+use App\Models\ProductoServicio;
 use App\Models\PuntoVenta;
 use App\Models\Secuencia;
 use App\Models\SiatCodigo;
+use App\Models\TipoDocumentoIdentidad;
+use App\Models\UnidadMedida;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -53,6 +58,8 @@ class EmisionService
                 return $existente;
             }
         }
+
+        $this->validarCatalogos($emisor, $datos);
 
         // -------- FASE 1: persistir --------
         try {
@@ -213,7 +220,12 @@ class EmisionService
         $cuf     = $builder->generateCuf();
         $hash    = hash('sha256', $xml);
 
-        $factura->update(['faccuf' => $cuf, 'faccufd' => $cufd->scovalor, 'facxmlhash' => $hash]);
+        $factura->update([
+            'faccuf'      => $cuf,
+            'faccufd'     => $cufd->scovalor,
+            'facxmlhash'  => $hash,
+            'facleyenda'  => $builder->getLeyendaUsada(),
+        ]);
 
         // Obtener CUIS y enviar.
         $cuis = $siat->getActiveCuis();
@@ -308,6 +320,8 @@ class EmisionService
                 . "PDV {$puntoVenta->pvpdv}; no se puede transcribir una factura CAFC sin una contingencia asociada.");
         }
 
+        $this->validarCatalogos($emisor, $datos);
+
         try {
             $factura = DB::transaction(function () use ($emisor, $puntoVenta, $evento, $datos) {
                 $totales = $this->calcularTotales($datos['detalle'], $datos['descuento_adicional'] ?? 0);
@@ -401,7 +415,12 @@ class EmisionService
             $cuf  = $builder->generateCuf();
             $hash = hash('sha256', $xml);
 
-            $factura->update(['faccuf' => $cuf, 'faccufd' => $cufd->scovalor, 'facxmlhash' => $hash]);
+            $factura->update([
+                'faccuf'     => $cuf,
+                'faccufd'    => $cufd->scovalor,
+                'facxmlhash' => $hash,
+                'facleyenda' => $builder->getLeyendaUsada(),
+            ]);
 
             $path = $this->guardarXml($gzip, $factura);
             $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
@@ -429,12 +448,57 @@ class EmisionService
         $cuf     = $builder->generateCuf();
         $hash    = hash('sha256', $xml);
 
-        $factura->update(['faccuf' => $cuf, 'faccufd' => $cufdValor, 'facxmlhash' => $hash]);
+        $factura->update([
+            'faccuf'     => $cuf,
+            'faccufd'    => $cufdValor,
+            'facxmlhash' => $hash,
+            'facleyenda' => $builder->getLeyendaUsada(),
+        ]);
 
         $path = $this->guardarXml($gzip, $factura);
         $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
 
         $contingencia->acoplar($factura, $emisor, $cufdValor, $controlCode);
+    }
+
+    /**
+     * Valida que los códigos del detalle y del cliente existan en los
+     * catálogos reales sincronizados del SIAT (ver comando
+     * siat:sincronizar-catalogos) — evita construir un CUF/XML con un
+     * código inventado que de todas formas terminaría rechazado por el
+     * SIAT, con un mensaje más claro y sin gastar el número de secuencia.
+     *
+     * Actividad/ProductoServicio son POR EMISOR (dependen de qué tiene
+     * habilitado ese NIT); UnidadMedida/MetodoPago/TipoDocumentoIdentidad
+     * son catálogos globales del SIN.
+     */
+    private function validarCatalogos(Emisor $emisor, array $datos): void
+    {
+        if (!TipoDocumentoIdentidad::where('tdicod', $datos['cliente']['tipo_documento'])->exists()) {
+            throw new Exception("Tipo de documento de identidad '{$datos['cliente']['tipo_documento']}' no es un código válido del SIN.");
+        }
+
+        if (!MetodoPago::where('mpacod', $datos['metodo_pago'])->exists()) {
+            throw new Exception("Método de pago '{$datos['metodo_pago']}' no es un código válido del SIN.");
+        }
+
+        foreach ($datos['detalle'] as $linea) {
+            if (!Actividad::where('emiid', $emisor->emiid)->where('actcod', $linea['actividad_economica'])->where('actest', true)->exists()) {
+                throw new Exception("Actividad económica '{$linea['actividad_economica']}' no está habilitada para el emisor {$emisor->eminit}.");
+            }
+
+            if (!ProductoServicio::where('emiid', $emisor->emiid)
+                ->where('proactcod', $linea['actividad_economica'])
+                ->where('procodsin', $linea['codigo_producto_sin'])
+                ->exists()) {
+                throw new Exception("Código de producto SIN '{$linea['codigo_producto_sin']}' no está habilitado para "
+                    . "la actividad '{$linea['actividad_economica']}' del emisor {$emisor->eminit}.");
+            }
+
+            if (!UnidadMedida::where('unicod', $linea['unidad_medida'])->exists()) {
+                throw new Exception("Unidad de medida '{$linea['unidad_medida']}' no es un código válido del SIN.");
+            }
+        }
     }
 
     private function siguienteNumero(Emisor $emisor, PuntoVenta $puntoVenta): int

@@ -2,13 +2,18 @@
 
 namespace Tests\Concerns;
 
+use App\Models\Actividad;
 use App\Models\Emisor;
 use App\Models\EventosSignificativo;
 use App\Models\Factura;
+use App\Models\MetodoPago;
 use App\Models\MotivoAnulacion;
+use App\Models\ProductoServicio;
 use App\Models\PuntoVenta;
 use App\Models\Secuencia;
 use App\Models\SistemaCliente;
+use App\Models\TipoDocumentoIdentidad;
+use App\Models\UnidadMedida;
 
 /**
  * Fixtures compartidos entre tests de Feature. Nada de esto habla con el
@@ -76,6 +81,26 @@ trait InteractsWithFacturacion
     protected function crearMotivoAnulacion(int $codigo = 1, string $descripcion = 'FACTURA MAL EMITIDA'): MotivoAnulacion
     {
         return MotivoAnulacion::create(['moacod' => $codigo, 'moadesc' => $descripcion]);
+    }
+
+    /**
+     * Catálogos mínimos que EmisionService::validarCatalogos() exige para
+     * poder emitir — actividad/producto '620000'/'83131' (los que usan los
+     * fixtures de detalle en los tests), unidad de medida 57, método de
+     * pago 1, tipo de documento 1. Sin esto, cualquier test que pase por
+     * emitir()/emitirCafc() de verdad es rechazado antes de tocar el SIAT.
+     */
+    protected function crearCatalogosBasicos(Emisor $emisor): void
+    {
+        Actividad::create([
+            'emiid' => $emisor->emiid, 'actcod' => '620000', 'actdesc' => 'Actividad de prueba', 'actest' => true,
+        ]);
+        ProductoServicio::create([
+            'emiid' => $emisor->emiid, 'proactcod' => '620000', 'procodsin' => '83131', 'prodesc' => 'Producto de prueba',
+        ]);
+        UnidadMedida::firstOrCreate(['unicod' => 57], ['unidesc' => 'UNIDAD (SERVICIOS)']);
+        MetodoPago::firstOrCreate(['mpacod' => 1], ['mpadesc' => 'EFECTIVO']);
+        TipoDocumentoIdentidad::firstOrCreate(['tdicod' => 1], ['tdidesc' => 'CI - CEDULA DE IDENTIDAD']);
     }
 
     protected function crearEventoSignificativo(Emisor $emisor, array $overrides = []): EventosSignificativo

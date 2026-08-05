@@ -5,8 +5,10 @@ namespace Tests\Unit\Services;
 use App\Models\Emisor;
 use App\Models\Factura;
 use App\Models\FacturaDetalle;
+use App\Models\Leyenda;
 use App\Services\SiatXmlBuilder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
@@ -16,6 +18,9 @@ use Tests\TestCase;
  */
 class SiatXmlBuilderTest extends TestCase
 {
+    use RefreshDatabase;
+
+
     private function emisorDePrueba(): Emisor
     {
         $emisor = new Emisor([
@@ -133,5 +138,43 @@ class SiatXmlBuilderTest extends TestCase
 
         $this->assertStringNotContainsString('JUAN & PEREZ <SRL>', $xml);
         $this->assertStringContainsString('JUAN &amp; PEREZ &lt;SRL&gt;', $xml);
+    }
+
+    public function test_usa_la_leyenda_del_catalogo_real_para_la_actividad_de_la_factura(): void
+    {
+        Leyenda::create(['leyactcod' => '620000', 'leydesc' => 'Leyenda real de prueba para 620000']);
+
+        $builder = new SiatXmlBuilder($this->facturaDePrueba(), $this->emisorDePrueba(), 'CUFD', 'CONTROL');
+        $xml = $builder->buildXml();
+
+        $this->assertSame('Leyenda real de prueba para 620000', $builder->getLeyendaUsada());
+        $this->assertStringContainsString('<leyenda>Leyenda real de prueba para 620000</leyenda>', $xml);
+    }
+
+    public function test_sin_leyenda_en_el_catalogo_cae_al_texto_de_config(): void
+    {
+        // Ninguna Leyenda sincronizada para esta actividad.
+        $builder = new SiatXmlBuilder($this->facturaDePrueba(), $this->emisorDePrueba(), 'CUFD', 'CONTROL');
+
+        $this->assertSame(config('siat.leyenda_defecto'), $builder->getLeyendaUsada());
+    }
+
+    public function test_la_leyenda_se_mantiene_igual_entre_llamadas_a_buildxml(): void
+    {
+        // Varias leyendas para la misma actividad (se elige al azar entre
+        // ellas) — pero una vez resuelta en el constructor, debe ser SIEMPRE
+        // la misma dentro de la misma instancia. Si no lo fuera, el hash
+        // SHA-256 calculado sobre buildXml() no coincidiría con el XML que
+        // getGzipArchive() vuelve a generar internamente.
+        Leyenda::create(['leyactcod' => '620000', 'leydesc' => 'Leyenda A']);
+        Leyenda::create(['leyactcod' => '620000', 'leydesc' => 'Leyenda B']);
+        Leyenda::create(['leyactcod' => '620000', 'leydesc' => 'Leyenda C']);
+
+        $builder = new SiatXmlBuilder($this->facturaDePrueba(), $this->emisorDePrueba(), 'CUFD', 'CONTROL');
+
+        $primeraLlamada  = $builder->buildXml();
+        $segundaLlamada  = $builder->buildXml();
+
+        $this->assertSame($primeraLlamada, $segundaLlamada);
     }
 }

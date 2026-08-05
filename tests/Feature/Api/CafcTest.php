@@ -99,6 +99,7 @@ class CafcTest extends TestCase
     {
         $emisor = $this->crearEmisor();
         $this->crearPuntoVenta($emisor);
+        $this->crearCatalogosBasicos($emisor);
         $evento = $this->crearEventoSignificativo($emisor);
 
         // 200: 'error' no está mapeado a un código especial (mismo criterio
