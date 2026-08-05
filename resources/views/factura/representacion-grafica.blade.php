@@ -25,7 +25,12 @@
         th { background: #f2f2f2; }
         .totales { text-align: right; font-size: 10pt; font-weight: bold; margin-top: 8px; }
         .qr-bloque { text-align: center; margin: 24px 0; }
-        .qr-bloque svg { background: #fff; }
+        /* Tamaño físico fijo (no en px): la inspección de la Fase 2 mide
+           el QR impreso con regla — 3.5cm de lado asegura que quede
+           dentro del rango legible/escaneable exigido, sin depender de la
+           resolución de pantalla ni del tamaño intrínseco del SVG. Al ser
+           vectorial, escala sin pérdida de nitidez. */
+        .qr-bloque svg { background: #fff; width: 3.5cm; height: 3.5cm; }
         .leyendas p { font-size: 8pt; color: #333; margin: 4px 0; }
         .estado-banner {
             font-size: 9pt;
