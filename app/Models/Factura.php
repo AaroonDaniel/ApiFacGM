@@ -109,21 +109,28 @@ class Factura extends Model
     }
 
     /**
-     * Leyendas obligatorias de la representación gráfica. La primera es la
-     * que realmente quedó en el XML enviado (facleyenda, ver
-     * SiatXmlBuilder::resolverLeyenda()) — no se vuelve a elegir al azar
-     * acá, porque debe ser la misma que ya está en el documento fiscal. Sin
-     * facleyenda (factura rechazada antes de construir el XML), cae al
-     * texto fijo de config.
+     * Leyendas obligatorias de la representación gráfica — 3 categorías
+     * distintas exigidas por la RND, no una sola:
+     *  1. Consumidor (Ley N° 453), rotación aleatoria — la que realmente
+     *     quedó en el nodo <leyenda> del XML enviado (facleyenda, ver
+     *     SiatXmlBuilder::resolverLeyenda()). No se vuelve a elegir al azar
+     *     acá: debe ser la misma que ya está en el documento fiscal. Sin
+     *     facleyenda (factura rechazada antes de construir el XML), cae al
+     *     texto fijo de config.
+     *  2. Institucional del SIN, texto fijo.
+     *  3. Técnica de emisión (en línea / fuera de línea), texto fijo —
+     *     depende de si la factura terminó offline o no.
      */
     public function leyendas(): array
     {
         return [
             $this->facleyenda ?? config('siat.leyenda_defecto'),
-            'Esta factura contribuye al desarrollo del país. El uso ilícito de este documento será pasible a sanción de acuerdo a Ley.',
+            'Esta factura contribuye al desarrollo del país, el uso ilícito será sancionado penalmente de acuerdo a Ley.',
             $this->facsiatest === self::SIAT_OFFLINE
-                ? 'FACTURA EMITIDA EN CONTINGENCIA'
-                : 'FACTURA EMITIDA EN LÍNEA',
+                ? 'Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido fuera de línea, '
+                    . 'verifique su envío con su proveedor o en la página web www.impuestos.gob.bo'
+                : 'Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad '
+                    . 'de facturación en línea',
         ];
     }
 }
