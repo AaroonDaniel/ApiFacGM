@@ -12,6 +12,13 @@
     </ul>
 
     <p>
+        <a href="{{ route('factura.ver', $factura->faccuf) }}"
+           style="display: inline-block; padding: 10px 18px; background: #1a73e8; color: #fff; text-decoration: none; border-radius: 4px;">
+            Ver / Descargar Factura en PDF
+        </a>
+    </p>
+
+    <p>
         <a href="{{ $factura->qrUrl() }}">Verificar factura en el SIN</a>
     </p>
 
