@@ -6,9 +6,13 @@ use App\Models\Emisor;
 use App\Models\EventosSignificativo;
 use App\Models\Factura;
 use App\Models\PaqueteCafc;
+use App\Models\PuntoVenta;
+use Carbon\CarbonInterface;
+use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Throwable;
 
 /**
  * Orquesta el ciclo de vida de un Evento Significativo por caída del SIAT:
@@ -63,6 +67,72 @@ class ContingenciaService
     }
 
     /**
+     * Registra manualmente un Evento Significativo que el sistema no puede
+     * detectar solo — corte de energía, falla de software/hardware, etc.
+     * (a diferencia de "SIAT inaccesible", que sí se detecta automático
+     * cuando una factura no logra emitirse online, ver acoplar()).
+     *
+     * Se reporta DESPUÉS de que ya pasó (inicio y fin conocidos): tiene
+     * sentido — si el corte apagó el propio servidor, nadie puede llamar
+     * a este método hasta que vuelva la luz y con ella la conexión.
+     *
+     * Intenta registrar el evento ante el SIAT de inmediato; si falla (sin
+     * red, sin CUIS/CUFD), el evento queda ACTIVO igual, y el ciclo normal
+     * de reconciliación (cron de 5 min, o la próxima factura online
+     * aceptada de ese punto de venta) lo reintenta solo — mismo mecanismo
+     * reanudable que ya usan los eventos detectados automáticamente.
+     *
+     * @throws Exception si ya hay un evento sin resolver para ese punto de venta.
+     */
+    public function registrarManual(
+        Emisor $emisor,
+        PuntoVenta $puntoVenta,
+        int $codigoMotivo,
+        string $descripcion,
+        CarbonInterface $inicio,
+        CarbonInterface $fin
+    ): EventosSignificativo {
+        $existente = EventosSignificativo::activoDe($emisor->emiid, $puntoVenta->pvsuc, $puntoVenta->pvpdv)->first();
+        if ($existente) {
+            throw new Exception("Ya hay un evento significativo activo (#{$existente->eveid}) para este punto de venta "
+                . '(sucursal ' . $puntoVenta->pvsuc . ", PDV {$puntoVenta->pvpdv}); no se puede registrar uno nuevo "
+                . 'mientras el anterior no se resuelva.');
+        }
+
+        $siat = new SiatService($emisor, $puntoVenta->pvsuc, $puntoVenta->pvpdv);
+        $cufdActual = $siat->getActiveCufd();
+
+        if (!$cufdActual) {
+            throw new Exception('No se pudo obtener un CUFD vigente para registrar el evento (se requiere estar en línea).');
+        }
+
+        $evento = EventosSignificativo::create([
+            'emiid'       => $emisor->emiid,
+            'evesuc'      => $puntoVenta->pvsuc,
+            'evepdv'      => $puntoVenta->pvpdv,
+            'evecod'      => $codigoMotivo,
+            'evedesc'     => $descripcion,
+            'eveini'      => $inicio,
+            'evefin'      => $fin,
+            // Sin facturas offline construidas durante este evento (por
+            // definición: se reporta después de que ya pasó), no hay un
+            // CUFD "usado en la contingencia" real que registrar — se
+            // deja constancia del que estaba vigente al reportarlo.
+            'evecufd'     => $cufdActual->scovalor,
+            'evecufdctrl' => $cufdActual->scocodctrl,
+            'eveest'      => EventosSignificativo::ESTADO_ACTIVO,
+        ]);
+
+        try {
+            $this->reconciliar($evento, $emisor);
+        } catch (Throwable $e) {
+            Log::error("Evento manual #{$evento->eveid}: fallo al intentar registrar de inmediato — " . $e->getMessage());
+        }
+
+        return $evento->refresh();
+    }
+
+    /**
      * Cierra el evento activo, lo registra ante el SIAT y envía el paquete
      * con todas las facturas acopladas. Se llama cuando se detecta que la
      * conexión volvió (una factura logró emitirse online normalmente).
@@ -79,17 +149,14 @@ class ContingenciaService
         // un paquete aparte — ver enviarPaqueteCafc(). orderBy('facid'):
         // orden determinístico — hace falta para que facnumeroarchivo (la
         // posición dentro del .tar) sea reproducible al validar después.
+        // whereNull('faccafc'): las transcritas de talón preimpreso van en
+        // un paquete aparte — ver enviarPaqueteCafc(). orderBy('facid'):
+        // orden determinístico — hace falta para que facnumeroarchivo (la
+        // posición dentro del .tar) sea reproducible al validar después.
         $facturas = $evento->facturas()->where('facsiatest', Factura::SIAT_OFFLINE)
             ->whereNull('faccafc')
             ->orderBy('facid')
             ->get();
-
-        if ($facturas->isEmpty()) {
-            // Evento sin facturas asociadas (no debería pasar); lo cerramos igual.
-            Log::warning("Contingencia emisor {$emisor->eminit}: evento {$evento->eveid} no tiene facturas offline asociadas, se cierra sin registrar.");
-            $evento->update(['eveest' => EventosSignificativo::ESTADO_CERRADO, 'evefin' => now()]);
-            return false;
-        }
 
         $siat = new SiatService($emisor, $evento->evesuc, $evento->evepdv);
 
@@ -105,6 +172,8 @@ class ContingenciaService
             return false;
         }
 
+        $registradoAhora = false;
+
         // Reanudable: si ya se registró el evento ante el SIAT en un intento
         // previo (p. ej. el envío del paquete falló después), no se vuelve
         // a registrar — solo se reintenta el empaquetado y envío.
@@ -112,7 +181,11 @@ class ContingenciaService
             Log::info("Contingencia emisor {$emisor->eminit}: evento {$evento->eveid} ya registrado (codigoRecepcion={$evento->evecodrec}), reintentando solo el envío del paquete.");
         } else {
             $inicio = $evento->eveini;
-            $fin    = $facturas->max('fachora') ?? now();
+            // Sin facturas offline "normales" (ej. un evento manual
+            // puramente CAFC, ver registrarManual()), evefin ya viene
+            // provisto de antemano; si tampoco hay eso, now() como último
+            // recurso.
+            $fin = $facturas->max('fachora') ?? $evento->evefin ?? now();
 
             // El SIAT rechaza un evento con duración cero (rango de fechas
             // inválido) — pasa con eventos de una sola factura, donde
@@ -142,6 +215,19 @@ class ContingenciaService
                 'evefin'    => $fin,
                 'evecodrec' => $registro['codigoRecepcion'],
             ]);
+            $registradoAhora = true;
+        }
+
+        if ($facturas->isEmpty()) {
+            // Nada que empaquetar en el canal normal — puede ser un evento
+            // puramente CAFC (registrarManual() sin facturas offline
+            // "normales" acopladas). El registro en sí ya es avance real
+            // si se acaba de hacer en esta corrida. OJO: si ya estaba
+            // registrado de antes, este evento se sigue viendo como
+            // "pendiente de envío" (evecodrecpaq nunca se setea porque no
+            // hay nada que empaquetar acá) y el ciclo normal lo va a seguir
+            // reintentando sin efecto — inocuo, pero no se resuelve solo.
+            return $registradoAhora;
         }
 
         // --- Empaquetar y enviar ---
