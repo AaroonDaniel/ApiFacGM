@@ -68,16 +68,4 @@ class Emisor extends Model
     public function puntosVenta(): HasMany {
         return $this->hasMany(PuntoVenta::class, 'emiid', 'emiid');
     }
-
-    /**
-     * Punto de venta por defecto (0,0), usado cuando el cliente no
-     * especifica uno en la petición. Sigue existiendo aunque el emisor
-     * tenga otros puntos de venta registrados.
-     */
-    public function puntoVentaPrincipal(): ?PuntoVenta {
-        return $this->puntosVenta()
-            ->where('pvsuc', $this->emisuc)
-            ->where('pvpdv', $this->emipdv)
-            ->first();
-    }
 }

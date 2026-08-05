@@ -458,21 +458,6 @@ class SiatService
         }
     }
 
-    /**
-     * Lee el CUFD vigente sin intentar renovarlo (útil offline).
-     */
-    public function peekActiveCufd(): ?SiatCodigo
-    {
-        return SiatCodigo::query()
-            ->where('emiid', $this->emisor->emiid)
-            ->where('scotipo', SiatCodigo::TIPO_CUFD)
-            ->where('scoamb', $this->environment)
-            ->where('scoest', true)
-            ->where('scoven', '>', now())
-            ->latest('scoemi')
-            ->first();
-    }
-
     // ==========================================
     // ENVÍO DE FACTURA
     // ==========================================

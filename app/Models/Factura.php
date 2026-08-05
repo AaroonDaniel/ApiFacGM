@@ -89,11 +89,6 @@ class Factura extends Model
         return $this->belongsTo(PaqueteCafc::class, 'facpaquetecafcid', 'paqid');
     }
 
-    public function scopeHuerfano($query)
-    {
-        return $query->where('facsiatest', self::SIAT_OFFLINE)->whereNull('faceveid');
-    }
-
     /**
      * URL del validador público del SIN para el QR de la representación
      * gráfica. Dominio distinto al de los servicios SOAP (config

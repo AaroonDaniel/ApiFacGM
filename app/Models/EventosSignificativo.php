@@ -28,8 +28,6 @@ class EventosSignificativo extends Model
 
     public const ESTADO_ACTIVO = 'activo';
     public const ESTADO_CERRADO = 'cerrado';
-    public const ESTADO_REGISTRADO = 'registrado';
-    public const ESTADO_FALLIDO = 'fallido';
 
     /**
      * La extensión de vigencia del CUFD para facturar offline ante una
@@ -96,11 +94,6 @@ class EventosSignificativo extends Model
     public function paquetesCafc(): HasMany
     {
         return $this->hasMany(PaqueteCafc::class, 'eveid', 'eveid');
-    }
-
-    public function scopeDisponibleParaAcoplar($query)
-    {
-        return $query->whereIn('eveest', [self::ESTADO_ACTIVO, self::ESTADO_CERRADO])->whereNull('evecodrec');
     }
 
     /**
