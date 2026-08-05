@@ -130,6 +130,15 @@ class ProcesarContingenciasPendientes extends Command
                 continue;
             }
 
+            // 72h desde que se registró el evento para terminar de enviar
+            // el paquete CAFC — ventana más amplia que el offline normal
+            // porque de por medio hay transcripción manual.
+            if ($evento->excedioPlazoEnvioCafc()) {
+                Log::critical("Emisor {$emisor->eminit}: evento {$evento->eveid} superó las "
+                    . EventosSignificativo::LIMITE_HORAS_ENVIO_CAFC . "h para terminar de enviar el "
+                    . "paquete CAFC (cerrado el {$evento->evefin}) — requiere intervención manual.");
+            }
+
             $this->info("Emisor {$emisor->eminit}: enviando paquete CAFC del evento {$evento->eveid}...");
             try {
                 $ok = $contingencia->enviarPaqueteCafc($evento, $emisor);

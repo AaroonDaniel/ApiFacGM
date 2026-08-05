@@ -44,6 +44,14 @@ class EventosSignificativo extends Model
      */
     public const LIMITE_HORAS_ENVIO_PAQUETE = 48;
 
+    /**
+     * El paquete de facturas CAFC (transcritas de talón preimpreso) tiene
+     * una ventana más amplia que el offline normal — 72h desde que se
+     * registró el evento — porque de por medio hay trabajo manual de
+     * transcripción.
+     */
+    public const LIMITE_HORAS_ENVIO_CAFC = 72;
+
     protected $fillable = [
         'emiid',
         'evesuc',
@@ -138,5 +146,17 @@ class EventosSignificativo extends Model
     {
         return $this->evefin !== null
             && $this->evefin->diffInHours(now()) >= self::LIMITE_HORAS_ENVIO_PAQUETE;
+    }
+
+    /**
+     * True si ya pasaron más de 72h desde que se cerró/registró el evento
+     * (evefin) y todavía no se terminó de enviar el paquete CAFC. Mismo
+     * proxy que excedioPlazoEnvioPaquete(), con la ventana más amplia que
+     * le corresponde al CAFC.
+     */
+    public function excedioPlazoEnvioCafc(): bool
+    {
+        return $this->evefin !== null
+            && $this->evefin->diffInHours(now()) >= self::LIMITE_HORAS_ENVIO_CAFC;
     }
 }
