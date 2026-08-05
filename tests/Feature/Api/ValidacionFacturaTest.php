@@ -120,4 +120,19 @@ class ValidacionFacturaTest extends TestCase
             ->assertStatus(422)
             ->assertJsonFragment(['exito' => false]);
     }
+
+    public function test_una_excepcion_de_emisionservice_devuelve_422_no_500(): void
+    {
+        // EmisionService::emitir() lanza (actividad económica no habilitada
+        // para este emisor, ver validarCatalogos()) — antes esto devolvía
+        // 500 en store() (inconsistente con cafc(), que siempre devolvió 422
+        // para el mismo tipo de error).
+        $emisor = $this->crearEmisor();
+        $this->crearPuntoVenta($emisor);
+        // Sin crearCatalogosBasicos(): ninguna actividad está habilitada.
+
+        $this->conAuth()->postJson('/api/facturas', $this->datosValidos())
+            ->assertStatus(422)
+            ->assertJson(['exito' => false]);
+    }
 }

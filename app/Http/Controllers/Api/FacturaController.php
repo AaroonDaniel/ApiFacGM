@@ -73,7 +73,7 @@ class FacturaController extends Controller
             return response()->json([
                 'exito' => false,
                 'error' => 'Error al emitir la factura: ' . $e->getMessage(),
-            ], 500);
+            ], 422);
         }
 
         // 4. Responder según el estado final (201/200/422 — recién creada).
