@@ -9,6 +9,7 @@ use App\Models\Factura;
 use App\Models\MetodoPago;
 use App\Models\ProductoServicio;
 use App\Models\PuntoVenta;
+use App\Models\RangoCafc;
 use App\Models\Secuencia;
 use App\Models\SiatCodigo;
 use App\Models\TipoDocumentoIdentidad;
@@ -320,6 +321,7 @@ class EmisionService
                 . "PDV {$puntoVenta->pvpdv}; no se puede transcribir una factura CAFC sin una contingencia asociada.");
         }
 
+        $rango = $this->validarRangoCafc($emisor, $puntoVenta, $datos['codigo_cafc'], $datos['numero_factura']);
         $this->validarCatalogos($emisor, $datos);
 
         try {
@@ -380,6 +382,13 @@ class EmisionService
                 }
             }
             throw $e;
+        }
+
+        // Control local informativo — no afecta la validación en sí (que
+        // ya pasó arriba), solo deja registro de hasta dónde se consumió
+        // el rango.
+        if (($rango->rcfultimo ?? 0) < $datos['numero_factura']) {
+            $rango->update(['rcfultimo' => $datos['numero_factura']]);
         }
 
         $this->construirXmlCafc($emisor, $puntoVenta, $factura);
@@ -459,6 +468,41 @@ class EmisionService
         $factura->update(['facsiatest' => Factura::SIAT_OFFLINE, 'facxmlpath' => $path]);
 
         $contingencia->acoplar($factura, $emisor, $cufdValor, $controlCode);
+    }
+
+    /**
+     * Valida que el número de factura transcrito caiga dentro de un rango
+     * CAFC autorizado y vigente para este emisor+punto de venta.
+     *
+     * El rango en sí es 100% administrativo — el SIN lo entrega por el
+     * portal del SIAT junto al talonario físico preimpreso, no hay
+     * operación SOAP para "consultar" esto — pero validarlo LOCALMENTE
+     * antes de construir el XML es indispensable: un error de tipeo al
+     * transcribir (ej. un número que se pasa del rango físico autorizado
+     * del talonario) recién se detectaría cuando el SIAT rechace el
+     * paquete offline completo, arrastrando a las demás facturas del
+     * mismo envío — mucho después y con mucho menos contexto que un 422
+     * inmediato acá.
+     */
+    private function validarRangoCafc(Emisor $emisor, PuntoVenta $puntoVenta, string $codigoCafc, int $numeroFactura): RangoCafc
+    {
+        $rango = RangoCafc::where('emiid', $emisor->emiid)
+            ->where('rcfsuc', $puntoVenta->pvsuc)
+            ->where('rcfpdv', $puntoVenta->pvpdv)
+            ->where('rcfcafc', $codigoCafc)
+            ->where('rcfdesde', '<=', $numeroFactura)
+            ->where('rcfhasta', '>=', $numeroFactura)
+            ->where('rcflimite', '>=', now())
+            ->where('rcfest', true)
+            ->first();
+
+        if (!$rango) {
+            throw new Exception("El número de factura {$numeroFactura} o el código CAFC '{$codigoCafc}' no corresponden "
+                . "a un rango físico autorizado y vigente para este punto de venta (sucursal {$puntoVenta->pvsuc}, "
+                . "PDV {$puntoVenta->pvpdv}) del emisor {$emisor->eminit}.");
+        }
+
+        return $rango;
     }
 
     /**

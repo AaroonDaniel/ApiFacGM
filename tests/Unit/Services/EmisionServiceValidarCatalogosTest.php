@@ -56,6 +56,7 @@ class EmisionServiceValidarCatalogosTest extends TestCase
         $emisor = $this->crearEmisor();
         $pv = $this->crearPuntoVenta($emisor);
         $this->crearEventoSignificativo($emisor);
+        $this->crearRangoCafc($emisor);
 
         return [$emisor, $pv];
     }

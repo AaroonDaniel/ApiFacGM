@@ -10,6 +10,7 @@ use App\Models\MetodoPago;
 use App\Models\MotivoAnulacion;
 use App\Models\ProductoServicio;
 use App\Models\PuntoVenta;
+use App\Models\RangoCafc;
 use App\Models\Secuencia;
 use App\Models\SistemaCliente;
 use App\Models\TipoDocumentoIdentidad;
@@ -101,6 +102,25 @@ trait InteractsWithFacturacion
         UnidadMedida::firstOrCreate(['unicod' => 57], ['unidesc' => 'UNIDAD (SERVICIOS)']);
         MetodoPago::firstOrCreate(['mpacod' => 1], ['mpadesc' => 'EFECTIVO']);
         TipoDocumentoIdentidad::firstOrCreate(['tdicod' => 1], ['tdidesc' => 'CI - CEDULA DE IDENTIDAD']);
+    }
+
+    /**
+     * Rango CAFC autorizado que EmisionService::validarRangoCafc() exige
+     * para poder transcribir — por defecto cubre el 'numero_factura'/
+     * 'codigo_cafc' que usan los fixtures de CAFC en los tests.
+     */
+    protected function crearRangoCafc(Emisor $emisor, array $overrides = []): RangoCafc
+    {
+        return RangoCafc::create(array_merge([
+            'emiid'     => $emisor->emiid,
+            'rcfsuc'    => 0,
+            'rcfpdv'    => 0,
+            'rcfcafc'   => 'CAFC-TEST',
+            'rcfdesde'  => 1,
+            'rcfhasta'  => 1000,
+            'rcflimite' => now()->addDays(30),
+            'rcfest'    => true,
+        ], $overrides));
     }
 
     protected function crearEventoSignificativo(Emisor $emisor, array $overrides = []): EventosSignificativo

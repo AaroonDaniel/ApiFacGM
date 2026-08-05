@@ -100,6 +100,7 @@ class CafcTest extends TestCase
         $emisor = $this->crearEmisor();
         $this->crearPuntoVenta($emisor);
         $this->crearCatalogosBasicos($emisor);
+        $this->crearRangoCafc($emisor, ['rcfcafc' => 'CAFC-0001-ABCD']);
         $evento = $this->crearEventoSignificativo($emisor);
 
         // 200: 'error' no está mapeado a un código especial (mismo criterio
