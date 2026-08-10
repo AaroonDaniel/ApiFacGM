@@ -62,6 +62,8 @@ class EventosSignificativo extends Model
         'evecufdctrl',
         'evecodrec',
         'evecodrecpaq',
+        'evealertapaq',
+        'evealertacafc',
         'eveest',
         'eveusr',
         'evereg',
@@ -73,6 +75,8 @@ class EventosSignificativo extends Model
         'eveini' => 'datetime',
         'evefin' => 'datetime',
         'evereg' => 'datetime',
+        'evealertapaq' => 'datetime',
+        'evealertacafc' => 'datetime',
         'evecod' => 'integer'
     ];
 

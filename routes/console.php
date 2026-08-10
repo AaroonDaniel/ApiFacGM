@@ -28,3 +28,7 @@ Schedule::command('siat:renovar-cufd')->hourly()->withoutOverlapping();
 // Alarma + renovación proactiva del CUIS (vigencia ~365 días, 30 días de
 // aviso). Diario alcanza — hay meses de margen, a diferencia del CUFD.
 Schedule::command('siat:renovar-cuis')->daily()->withoutOverlapping();
+
+// Correo de urgencia al administrador cuando una contingencia supera su
+// plazo de envío (48h paquete offline / 72h paquete CAFC).
+Schedule::command('siat:alertar-plazos')->hourly()->withoutOverlapping();

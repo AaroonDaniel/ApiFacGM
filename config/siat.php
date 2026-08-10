@@ -69,4 +69,16 @@ return [
         'Ley N° 453: El proveedor deberá entregar el producto en las modalidades y términos ofertados.'
     ),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Correo del administrador para alertas de contingencia
+    |--------------------------------------------------------------------------
+    |
+    | Destino de las alertas de urgencia cuando un evento significativo
+    | supera el plazo normativo para terminar de enviar su paquete offline
+    | (48h) o su paquete CAFC (72h) — ver comando siat:alertar-plazos.
+    |
+    */
+    'admin_email' => env('SIAT_ADMIN_EMAIL'),
+
 ];
