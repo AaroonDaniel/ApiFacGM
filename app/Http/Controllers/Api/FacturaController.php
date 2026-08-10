@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Factura;
 use App\Services\AnulacionService;
 use App\Services\EmisionService;
+use App\Services\SiatService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -241,6 +242,59 @@ class FacturaController extends Controller
         }
 
         return response()->json($this->payload($factura), 200);
+    }
+
+    /**
+     * GET /api/facturas/{factura}/estado-siat — le pregunta al SIAT en
+     * tiempo real cuál es el estado oficial de la factura en sus
+     * servidores (VÁLIDA, ANULADA, o NO EXISTE), en vez de confiar solo en
+     * el estado que guardamos localmente al momento de la emisión.
+     */
+    public function verificarEstado(Request $request, Factura $factura): JsonResponse
+    {
+        if ($factura->facsisorig !== $request->attributes->get('sistemaCliente')->siscod) {
+            return response()->json([
+                'exito' => false,
+                'error' => 'No tienes acceso a esta factura.',
+            ], 403);
+        }
+
+        if (!$factura->faccuf || !$factura->faccufd) {
+            return response()->json([
+                'exito' => false,
+                'error' => 'Esta factura todavía no tiene CUF/CUFD asignado; no se puede consultar su estado ante el SIAT.',
+            ], 422);
+        }
+
+        $emisor = $factura->emisor;
+        $siat   = new SiatService($emisor, $factura->facsuc, $factura->facpdv);
+
+        $cuis = $siat->getActiveCuis();
+        if (!$cuis) {
+            return response()->json([
+                'exito' => false,
+                'error' => 'No se pudo obtener un CUIS vigente para consultar al SIAT.',
+            ], 422);
+        }
+
+        $resultado = $siat->verificarEstadoFactura($cuis, $factura->faccufd, $factura->faccuf, $factura->facid);
+
+        if (!($resultado['success'] ?? false)) {
+            return response()->json([
+                'exito' => false,
+                'error' => $resultado['mensaje'] ?? 'No se pudo consultar el estado ante el SIAT.',
+            ], 502);
+        }
+
+        return response()->json([
+            'exito' => true,
+            'factura' => [
+                'id'  => $factura->facid,
+                'cuf' => $factura->faccuf,
+            ],
+            'estado_siat' => $resultado['status'],
+            'descripcion' => $resultado['descripcion'] ?? null,
+        ], 200);
     }
 
     /**

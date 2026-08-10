@@ -591,6 +591,70 @@ class SiatService
         }
     }
 
+    /**
+     * Consulta ante el SIAT el estado oficial de una factura ya emitida
+     * (operación 'verificacionEstadoFactura', confirmada en el WSDL real de
+     * ServicioFacturacionCompraVenta — ver storage/app/siat/wsdl). El
+     * nombre del nodo de petición ('SolicitudServicioEstadoFactura') sigue
+     * el mismo patrón mecánico Solicitud+Servicio+NombreOperación que el
+     * resto de operaciones de este servicio (recepcionFactura →
+     * SolicitudServicioRecepcionFactura, anulacionFactura →
+     * SolicitudServicioAnulacionFactura); a diferencia de esas, esta
+     * respuesta no se confirmó todavía en vivo contra el piloto, así que se
+     * intenta primero el nodo específico de estado y se cae al genérico
+     * RespuestaServicioFacturacion si el SIAT responde con ese en su lugar.
+     *
+     * status: 'valida' | 'anulada' | 'no_existe' | 'error'
+     */
+    public function verificarEstadoFactura(string $cuis, string $cufd, string $cuf, ?int $facturaId = null): array
+    {
+        $params = ['SolicitudServicioEstadoFactura' => array_merge($this->getBaseParameters(), [
+            'codigoDocumentoSector' => 1,
+            'cuis'                  => $cuis,
+            'cufd'                  => $cufd,
+            'cuf'                   => $cuf,
+        ])];
+
+        try {
+            $client   = $this->getSoapClient('ServicioFacturacionCompraVenta');
+            $response = $client->verificacionEstadoFactura($params);
+            $r = $response->RespuestaEstadoFactura ?? $response->RespuestaServicioFacturacion ?? null;
+
+            if (!$r) {
+                $this->registrarTransaccion('verificacionEstadoFactura', $params, $response, SiatTransaccion::ESTADO_RECHAZO, $facturaId);
+                return ['success' => false, 'status' => 'error', 'mensaje' => 'Sin respuesta del SIAT', 'raw' => $response];
+            }
+
+            $this->registrarTransaccion('verificacionEstadoFactura', $params, $response, SiatTransaccion::ESTADO_EXITO, $facturaId);
+
+            $descripcion = strtoupper($r->codigoDescripcion ?? $r->estadoFactura ?? '');
+            $status = match (true) {
+                str_contains($descripcion, 'ANULA')  => 'anulada',
+                str_contains($descripcion, 'VALID')  => 'valida',
+                str_contains($descripcion, 'EXISTE') => 'no_existe',
+                default                                => 'error',
+            };
+
+            return [
+                'success'     => true,
+                'status'      => $status,
+                'descripcion' => $r->codigoDescripcion ?? $r->estadoFactura ?? null,
+                'raw'         => $response,
+            ];
+        } catch (SoapFault $fault) {
+            Log::error('SIAT verificarEstadoFactura: ' . $fault->getMessage());
+            $offline = $this->isNetworkFailure($fault);
+            $this->registrarTransaccion('verificacionEstadoFactura', $params, $fault->getMessage(),
+                $offline ? SiatTransaccion::ESTADO_OFFLINE : SiatTransaccion::ESTADO_RECHAZO, $facturaId);
+            return [
+                'success' => false,
+                'status'  => 'error',
+                'mensaje' => $fault->getMessage(),
+                'offline' => $offline,
+            ];
+        }
+    }
+
     // ==========================================
     // CONTINGENCIA (EVENTOS SIGNIFICATIVOS Y PAQUETES OFFLINE)
     // ==========================================

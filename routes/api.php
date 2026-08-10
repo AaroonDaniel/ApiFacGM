@@ -8,6 +8,7 @@ Route::middleware(['throttle:60,1', 'sistema.auth', 'throttle:sistema'])->group(
     Route::post('/facturas', [FacturaController::class, 'store']);
     Route::post('/facturas/cafc', [FacturaController::class, 'cafc']);
     Route::get('/facturas/{factura}', [FacturaController::class, 'show']);
+    Route::get('/facturas/{factura}/estado-siat', [FacturaController::class, 'verificarEstado']);
     Route::post('/facturas/{factura}/anular', [FacturaController::class, 'anular']);
     Route::post('/facturas/{factura}/revertir-anulacion', [FacturaController::class, 'revertirAnulacion']);
     Route::post('/eventos-significativos', [EventoSignificativoController::class, 'store']);
