@@ -46,10 +46,25 @@ class CafcTest extends TestCase
         ];
     }
 
+    private ?array $sistemaAuth = null;
+
+    /** @return array{0: \App\Models\SistemaCliente, 1: string} */
+    private function sistemaAuth(): array
+    {
+        return $this->sistemaAuth ??= $this->crearSistemaCliente();
+    }
+
     private function conAuth()
     {
-        [, $key] = $this->crearSistemaCliente();
+        [, $key] = $this->sistemaAuth();
         return $this->withHeader('Authorization', 'Bearer ' . $key);
+    }
+
+    /** Emisor vinculado (emisores.sisid) al sistema autenticado por conAuth(). */
+    private function crearEmisorAutorizado(array $overrides = []): \App\Models\Emisor
+    {
+        [$sistema] = $this->sistemaAuth();
+        return $this->crearEmisor(array_merge(['sisid' => $sistema->sisid], $overrides));
     }
 
     public function test_falta_numero_factura_devuelve_422(): void
@@ -84,7 +99,7 @@ class CafcTest extends TestCase
 
     public function test_sin_evento_de_contingencia_devuelve_422(): void
     {
-        $emisor = $this->crearEmisor();
+        $emisor = $this->crearEmisorAutorizado();
         $this->crearPuntoVenta($emisor);
         // Sin crearEventoSignificativo(): no hay contingencia registrada.
 
@@ -97,7 +112,7 @@ class CafcTest extends TestCase
 
     public function test_transcribe_la_factura_con_el_numero_y_cafc_exactos(): void
     {
-        $emisor = $this->crearEmisor();
+        $emisor = $this->crearEmisorAutorizado();
         $this->crearPuntoVenta($emisor);
         $this->crearCatalogosBasicos($emisor);
         $this->crearRangoCafc($emisor, ['rcfcafc' => 'CAFC-0001-ABCD']);
@@ -119,7 +134,7 @@ class CafcTest extends TestCase
 
     public function test_numero_de_factura_duplicado_en_la_misma_dosificacion_falla(): void
     {
-        $emisor = $this->crearEmisor();
+        $emisor = $this->crearEmisorAutorizado();
         $this->crearPuntoVenta($emisor);
         $this->crearEventoSignificativo($emisor);
         $this->crearFactura($emisor, ['facnro' => 501]);

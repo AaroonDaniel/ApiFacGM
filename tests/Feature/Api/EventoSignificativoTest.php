@@ -31,10 +31,25 @@ class EventoSignificativoTest extends TestCase
         ];
     }
 
+    private ?array $sistemaAuth = null;
+
+    /** @return array{0: \App\Models\SistemaCliente, 1: string} */
+    private function sistemaAuth(): array
+    {
+        return $this->sistemaAuth ??= $this->crearSistemaCliente();
+    }
+
     private function conAuth()
     {
-        [, $key] = $this->crearSistemaCliente();
+        [, $key] = $this->sistemaAuth();
         return $this->withHeader('Authorization', 'Bearer ' . $key);
+    }
+
+    /** Emisor vinculado (emisores.sisid) al sistema autenticado por conAuth(). */
+    private function crearEmisorAutorizado(array $overrides = []): \App\Models\Emisor
+    {
+        [$sistema] = $this->sistemaAuth();
+        return $this->crearEmisor(array_merge(['sisid' => $sistema->sisid], $overrides));
     }
 
     public function test_falta_codigo_motivo_devuelve_422(): void
@@ -90,7 +105,7 @@ class EventoSignificativoTest extends TestCase
 
     public function test_no_se_puede_registrar_si_ya_hay_un_evento_activo_para_el_punto_de_venta(): void
     {
-        $emisor = $this->crearEmisor();
+        $emisor = $this->crearEmisorAutorizado();
         $this->crearPuntoVenta($emisor);
         $this->crearEventoSignificativo($emisor); // ya activo para (0,0)
 
@@ -105,7 +120,7 @@ class EventoSignificativoTest extends TestCase
 
     public function test_sin_evento_previo_intenta_registrar_y_falla_por_red_no_por_validacion(): void
     {
-        $emisor = $this->crearEmisor();
+        $emisor = $this->crearEmisorAutorizado();
         $this->crearPuntoVenta($emisor);
 
         $response = $this->conAuth()->postJson('/api/eventos-significativos', $this->datosValidos());

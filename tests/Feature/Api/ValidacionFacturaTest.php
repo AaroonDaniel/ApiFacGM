@@ -34,10 +34,25 @@ class ValidacionFacturaTest extends TestCase
         ];
     }
 
+    private ?array $sistemaAuth = null;
+
+    /** @return array{0: \App\Models\SistemaCliente, 1: string} */
+    private function sistemaAuth(): array
+    {
+        return $this->sistemaAuth ??= $this->crearSistemaCliente();
+    }
+
     private function conAuth()
     {
-        [, $key] = $this->crearSistemaCliente();
+        [, $key] = $this->sistemaAuth();
         return $this->withHeader('Authorization', 'Bearer ' . $key);
+    }
+
+    /** Emisor vinculado (emisores.sisid) al sistema autenticado por conAuth(). */
+    private function crearEmisorAutorizado(array $overrides = []): \App\Models\Emisor
+    {
+        [$sistema] = $this->sistemaAuth();
+        return $this->crearEmisor(array_merge(['sisid' => $sistema->sisid], $overrides));
     }
 
     public function test_falta_emisor_nit_devuelve_422(): void
@@ -110,7 +125,7 @@ class ValidacionFacturaTest extends TestCase
 
     public function test_punto_de_venta_inexistente_devuelve_422(): void
     {
-        $emisor = $this->crearEmisor();
+        $emisor = $this->crearEmisorAutorizado();
         $this->crearPuntoVenta($emisor); // solo (0,0)
 
         $datos = $this->datosValidos();
@@ -127,7 +142,7 @@ class ValidacionFacturaTest extends TestCase
         // para este emisor, ver validarCatalogos()) — antes esto devolvía
         // 500 en store() (inconsistente con cafc(), que siempre devolvió 422
         // para el mismo tipo de error).
-        $emisor = $this->crearEmisor();
+        $emisor = $this->crearEmisorAutorizado();
         $this->crearPuntoVenta($emisor);
         // Sin crearCatalogosBasicos(): ninguna actividad está habilitada.
 

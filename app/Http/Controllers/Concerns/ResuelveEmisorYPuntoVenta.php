@@ -40,7 +40,7 @@ trait ResuelveEmisorYPuntoVenta
         // sistema autenticado (útil para pruebas) — es responsabilidad de
         // quien administra los emisores decidir cuándo cerrarlo.
         $sistemaCliente = $request->attributes->get('sistemaCliente');
-        if ($emisor->sisid !== null && $emisor->sisid !== $sistemaCliente->sisid) {
+        if ($emisor->sisid !== $sistemaCliente->sisid) {
             return response()->json([
                 'exito' => false,
                 'error' => 'Tu sistema no tiene autorización para facturar con este emisor.',

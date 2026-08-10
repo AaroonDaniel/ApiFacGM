@@ -18,9 +18,9 @@ class IdempotenciaTest extends TestCase
 
     public function test_reintentar_la_misma_referencia_externa_devuelve_la_factura_existente_sin_crear_otra(): void
     {
-        $emisor = $this->crearEmisor();
+        [$sistema, $key] = $this->crearSistemaCliente('sistema-dueño');
+        $emisor = $this->crearEmisor(['sisid' => $sistema->sisid]);
         $this->crearPuntoVenta($emisor);
-        [, $key] = $this->crearSistemaCliente('sistema-dueño');
 
         $existente = $this->crearFactura($emisor, [
             'facsisorig' => 'sistema-dueño',
