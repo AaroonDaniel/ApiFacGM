@@ -156,7 +156,41 @@ class SiatXmlBuilder
             $root->appendChild($this->buildDetail($item));
         }
 
+        $this->validarContraXsd();
+
         return $this->xmlDocument->saveXML();
+    }
+
+    /**
+     * Valida el XML contra el XSD oficial del SIAT — pero solo si ya lo
+     * tenemos en disco. El SIN entrega ese archivo recién al autorizar el
+     * software (certificación Fase 1); hasta entonces no existe
+     * storage/siat/facturaComputarizadaCompraVenta.xsd y no hay nada contra
+     * qué validar. Sin este chequeo, schemaValidate() sobre un archivo
+     * inexistente dispara un warning de libxml que el manejador de errores
+     * de Laravel convierte en excepción, bloqueando la emisión de TODAS las
+     * facturas mientras no se cuente con la autorización del SIN.
+     */
+    protected function validarContraXsd(): void
+    {
+        $xsdPath = storage_path('siat/facturaComputarizadaCompraVenta.xsd');
+
+        if (!is_file($xsdPath)) {
+            return;
+        }
+
+        libxml_use_internal_errors(true);
+        libxml_clear_errors();
+
+        $valido = $this->xmlDocument->schemaValidate($xsdPath);
+
+        if (!$valido) {
+            $errores = collect(libxml_get_errors())->map(fn ($e) => trim($e->message))->implode(' | ');
+            libxml_clear_errors();
+            throw new Exception("El XML de la factura #{$this->factura->facnro} no cumple el XSD del SIAT: {$errores}");
+        }
+
+        libxml_clear_errors();
     }
 
     /**
