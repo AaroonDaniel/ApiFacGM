@@ -20,8 +20,7 @@ class FacturaController extends Controller
     public function __construct(
         private EmisionService $emisionService,
         private AnulacionService $anulacionService,
-    ) {
-    }
+    ) {}
 
     /**
      * POST /api/facturas — emitir una factura.

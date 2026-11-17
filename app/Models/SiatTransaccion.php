@@ -15,7 +15,13 @@ class SiatTransaccion extends Model
     public const ESTADO_OFFLINE = 'offline';
 
     protected $fillable = [
-        'emiid', 'stxfacid', 'stxserv', 'stxpet', 'stxresp', 'stxest', 'stxfch',
+        'emiid',
+        'stxfacid',
+        'stxserv',
+        'stxpet',
+        'stxresp',
+        'stxest',
+        'stxfch',
     ];
 
     protected $casts = ['stxfch' => 'datetime'];

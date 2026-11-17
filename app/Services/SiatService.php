@@ -68,7 +68,6 @@ class SiatService
         if (!is_dir($cacheDir) && !mkdir($cacheDir, 0755, true) && !is_dir($cacheDir)) {
             throw new SoapFault('CLIENT', "No se pudo crear el directorio de caché WSDL: {$cacheDir}");
         }
-
         // El WSDL se cachea por emisor+endpoint (el token va en la descarga).
         $wsdlFile   = $cacheDir . DIRECTORY_SEPARATOR . md5($url . $this->token) . '.wsdl';
         $needsFetch = !file_exists($wsdlFile) || (time() - filemtime($wsdlFile)) > $ttl;
