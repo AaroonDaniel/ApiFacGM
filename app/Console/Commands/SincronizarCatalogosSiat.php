@@ -100,42 +100,42 @@ class SincronizarCatalogosSiat extends Command
 
     private function sincronizarGlobales(SiatService $siat): void
     {
-        $this->reemplazarCatalogo($siat->sincronizarUnidadesMedida(), UnidadMedida::class, fn ($item) => [
+        $this->reemplazarCatalogo($siat->sincronizarUnidadesMedida(), UnidadMedida::class, fn($item) => [
             'unicod'  => (int) $item->codigoClasificador,
             'unidesc' => $item->descripcion,
         ], 'unidades de medida');
 
-        $this->reemplazarCatalogo($siat->sincronizarLeyendas(), Leyenda::class, fn ($item) => [
+        $this->reemplazarCatalogo($siat->sincronizarLeyendas(), Leyenda::class, fn($item) => [
             'leyactcod' => $item->codigoActividad,
             'leydesc'   => $item->descripcionLeyenda,
         ], 'leyendas');
 
-        $this->reemplazarCatalogo($siat->sincronizarTiposDocumentoIdentidad(), TipoDocumentoIdentidad::class, fn ($item) => [
+        $this->reemplazarCatalogo($siat->sincronizarTiposDocumentoIdentidad(), TipoDocumentoIdentidad::class, fn($item) => [
             'tdicod'  => (int) $item->codigoClasificador,
             'tdidesc' => $item->descripcion,
         ], 'tipos de documento de identidad');
 
-        $this->reemplazarCatalogo($siat->sincronizarMetodosPago(), MetodoPago::class, fn ($item) => [
+        $this->reemplazarCatalogo($siat->sincronizarMetodosPago(), MetodoPago::class, fn($item) => [
             'mpacod'  => (int) $item->codigoClasificador,
             'mpadesc' => $item->descripcion,
         ], 'métodos de pago');
 
-        $this->reemplazarCatalogo($siat->sincronizarMotivosAnulacion(), MotivoAnulacion::class, fn ($item) => [
+        $this->reemplazarCatalogo($siat->sincronizarMotivosAnulacion(), MotivoAnulacion::class, fn($item) => [
             'moacod'  => (int) $item->codigoClasificador,
             'moadesc' => $item->descripcion,
         ], 'motivos de anulación');
 
-        $this->reemplazarCatalogo($siat->sincronizarTiposMoneda(), Moneda::class, fn ($item) => [
+        $this->reemplazarCatalogo($siat->sincronizarTiposMoneda(), Moneda::class, fn($item) => [
             'moncod'  => (int) $item->codigoClasificador,
             'mondesc' => $item->descripcion,
         ], 'tipos de moneda');
 
-        $this->reemplazarCatalogo($siat->sincronizarTiposDocumentoSector(), TipoDocumentoSector::class, fn ($item) => [
+        $this->reemplazarCatalogo($siat->sincronizarTiposDocumentoSector(), TipoDocumentoSector::class, fn($item) => [
             'tdscod'  => (int) $item->codigoClasificador,
             'tdsdesc' => $item->descripcion,
         ], 'tipos de documento sector');
 
-        $this->reemplazarCatalogo($siat->sincronizarMotivosEventoSignificativo(), MotivoEventoSignificativo::class, fn ($item) => [
+        $this->reemplazarCatalogo($siat->sincronizarMotivosEventoSignificativo(), MotivoEventoSignificativo::class, fn($item) => [
             'mevcod'  => (int) $item->codigoClasificador,
             'mevdesc' => $item->descripcion,
         ], 'motivos de evento significativo');
@@ -168,20 +168,28 @@ class SincronizarCatalogosSiat extends Command
     /**
      * @param class-string<Model> $modelo
      */
-    private function reemplazarCatalogo(array $resultado, string $modelo, Closure $mapear, string $etiqueta): void
+    private function reemplazarCatalogo($resultado, string $modelClass, callable $mapper, string $nombre): void
     {
-        if (!$resultado['success']) {
-            $this->error("Fallo al sincronizar {$etiqueta} — " . ($resultado['mensaje'] ?? ''));
+        if (!isset($resultado['success']) || !$resultado['success']) {
+            $this->warn("No se pudo sincronizar el catálogo de {$nombre}.");
             return;
         }
 
-        DB::transaction(function () use ($modelo, $resultado, $mapear) {
-            $modelo::query()->delete();
-            foreach ($resultado['items'] as $item) {
-                $modelo::create($mapear($item));
-            }
-        });
+        $registros = $resultado['data'] ?? $resultado['datos'] ?? [];
 
-        $this->info(count($resultado['items']) . " {$etiqueta} sincronizados.");
+        foreach ($registros as $item) {
+            $data = $mapper($item);
+
+            // Obtenemos la primera llave del array mapeado (ej: 'unicod', 'leyactcod', 'tdicod', etc.)
+            $primaryKey = array_key_first($data);
+
+            // Usamos updateOrCreate para actualizar si ya existe o crearlo si es nuevo
+            $modelClass::updateOrCreate(
+                [$primaryKey => $data[$primaryKey]],
+                $data
+            );
+        }
+
+        $this->info("Catálogo de {$nombre} sincronizado exitosamente.");
     }
 }

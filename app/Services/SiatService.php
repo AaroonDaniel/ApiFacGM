@@ -237,6 +237,19 @@ class SiatService
 
     public function getCuis(): array
     {
+        // 1. BUSCAR CUIS LOCAL VIGENTE PRIMERO
+        $cuisLocal = \App\Models\SiatCodigo::where('emiid', $this->emisor->emiid)
+            ->where('scotipo', 'CUIS')
+            ->where('scoest', true)
+            ->where('scoven', '>', now())
+            ->first();
+
+        if ($cuisLocal) {
+            // Retorna tu CUIS local registrado (ej. 9BDCABFB) sin ir a internet
+            return ['success' => true, 'codigo' => $cuisLocal->scovalor];
+        }
+
+        // 2. SI NO EXISTE LOCALMENTE, PROCEDE CON LA LLAMADA SOAP HABITUAL
         $params = ['SolicitudCuis' => $this->getBaseParameters()];
         try {
             $client   = $this->getSoapClient('FacturacionCodigos');
